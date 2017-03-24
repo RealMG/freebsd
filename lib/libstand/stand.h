@@ -39,7 +39,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -139,7 +139,7 @@ struct devsw {
     int		dv_type;		/* opaque type constant, arch-dependant */
     int		(*dv_init)(void);	/* early probe call */
     int		(*dv_strategy)(void *devdata, int rw, daddr_t blk,
-			size_t offset, size_t size, char *buf, size_t *rsize);
+			size_t size, char *buf, size_t *rsize);
     int		(*dv_open)(struct open_file *f, ...);
     int		(*dv_close)(struct open_file *f);
     int		(*dv_ioctl)(struct open_file *f, u_long cmd, void *data);
@@ -168,6 +168,7 @@ struct devdesc
 #define DEVT_NET	2
 #define DEVT_CD		3
 #define DEVT_ZFS	4
+#define DEVT_FD		5
     int			d_unit;
     void		*d_opendata;
 };

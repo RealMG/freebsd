@@ -418,6 +418,7 @@ shm_dotruncate(struct shmfd *shmfd, off_t length)
 	vm_ooffset_t delta;
 	int base, rv;
 
+	KASSERT(length >= 0, ("shm_dotruncate: length < 0"));
 	object = shmfd->shm_object;
 	VM_OBJECT_WLOCK(object);
 	if (length == shmfd->shm_size) {
@@ -460,7 +461,15 @@ retry:
 				    NULL);
 				vm_page_lock(m);
 				if (rv == VM_PAGER_OK) {
-					vm_page_deactivate(m);
+					/*
+					 * Since the page was not resident,
+					 * and therefore not recently
+					 * accessed, immediately enqueue it
+					 * for asynchronous laundering.  The
+					 * current operation is not regarded
+					 * as an access.
+					 */
+					vm_page_launder(m);
 					vm_page_unlock(m);
 					vm_page_xunbusy(m);
 				} else {
@@ -478,7 +487,7 @@ retry:
 				vm_pager_page_unswapped(m);
 			}
 		}
-		delta = ptoa(object->size - nobjsize);
+		delta = IDX_TO_OFF(object->size - nobjsize);
 
 		/* Toss in memory pages. */
 		if (nobjsize < object->size)
@@ -493,8 +502,8 @@ retry:
 		swap_release_by_cred(delta, object->cred);
 		object->charge -= delta;
 	} else {
-		/* Attempt to reserve the swap */
-		delta = ptoa(nobjsize - object->size);
+		/* Try to reserve additional swap space. */
+		delta = IDX_TO_OFF(nobjsize - object->size);
 		if (!swap_reserve_by_cred(delta, object->cred)) {
 			VM_OBJECT_WUNLOCK(object);
 			return (ENOMEM);
@@ -883,20 +892,20 @@ shm_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t objsize,
 		return (EACCES);
 	maxprot &= cap_maxprot;
 
+	/* See comment in vn_mmap(). */
+	if (
+#ifdef _LP64
+	    objsize > OFF_MAX ||
+#endif
+	    foff < 0 || foff > OFF_MAX - objsize)
+		return (EINVAL);
+
 #ifdef MAC
 	error = mac_posixshm_check_mmap(td->td_ucred, shmfd, prot, flags);
 	if (error != 0)
 		return (error);
 #endif
 	
-	/*
-	 * XXXRW: This validation is probably insufficient, and subject to
-	 * sign errors.  It should be fixed.
-	 */
-	if (foff >= shmfd->shm_size ||
-	    foff + objsize > round_page(shmfd->shm_size))
-		return (EINVAL);
-
 	mtx_lock(&shm_timestamp_lock);
 	vfs_timestamp(&shmfd->shm_atime);
 	mtx_unlock(&shm_timestamp_lock);

@@ -17,7 +17,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -276,11 +276,6 @@ char *trap_type[] = {
 
 #if !defined(SMP) && (defined(DDB) || defined(DEBUG))
 struct trapdebug trapdebug[TRAPSIZE], *trp = trapdebug;
-#endif
-
-#if defined(DDB) || defined(DEBUG)
-void stacktrace(struct trapframe *);
-void logstacktrace(struct trapframe *);
 #endif
 
 #define	KERNLAND(x)	((vm_offset_t)(x) >= VM_MIN_KERNEL_ADDRESS && (vm_offset_t)(x) < VM_MAX_KERNEL_ADDRESS)
@@ -1082,7 +1077,6 @@ dofault:
 err:
 
 #if !defined(SMP) && defined(DEBUG)
-		stacktrace(!usermode ? trapframe : td->td_frame);
 		trapDump("trap");
 #endif
 #ifdef SMP
@@ -1301,18 +1295,6 @@ MipsEmulateBranch(struct trapframe *framePtr, uintptr_t instPC, int fpcCSR,
 	}
 	return (retAddr);
 }
-
-
-#if defined(DDB) || defined(DEBUG)
-/*
- * Print a stack backtrace.
- */
-void
-stacktrace(struct trapframe *regs)
-{
-	stacktrace_subr(regs->pc, regs->sp, regs->ra, printf);
-}
-#endif
 
 static void
 log_frame_dump(struct trapframe *frame)

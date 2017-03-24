@@ -38,7 +38,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/types.h>
 #include <sys/bus.h>
 #include <sys/callout.h>
-#include <sys/endian.h>
 #include <sys/kernel.h>
 #include <sys/libkern.h>
 #include <sys/lock.h>
@@ -59,14 +58,17 @@ __FBSDID("$FreeBSD$");
 #include <arm/freescale/imx/imx_ccmvar.h>
 #endif
 
+#include <dev/gpio/gpiobusvar.h>
+
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
 
 #include <dev/mmc/bridge.h>
-#include <dev/mmc/mmcreg.h>
-#include <dev/mmc/mmcbrvar.h>
 
 #include <dev/sdhci/sdhci.h>
+#include <dev/sdhci/sdhci_fdt_gpio.h>
+
+#include "mmcbr_if.h"
 #include "sdhci_if.h"
 
 struct fsl_sdhci_softc {
@@ -77,10 +79,10 @@ struct fsl_sdhci_softc {
 	struct sdhci_slot	slot;
 	struct callout		r1bfix_callout;
 	sbintime_t		r1bfix_timeout_at;
+	struct sdhci_fdt_gpio * gpio;
 	uint32_t		baseclk_hz;
 	uint32_t		cmd_and_mode;
 	uint32_t		r1bfix_intmask;
-	boolean_t		force_card_present;
 	uint16_t		sdclockreg_freq_bits;
 	uint8_t			r1bfix_type;
 	uint8_t			hwtype;
@@ -345,8 +347,6 @@ fsl_sdhci_read_4(device_t dev, struct sdhci_slot *slot, bus_size_t off)
 		val32 &= 0x000F0F07;
 		val32 |= (wrk32 >> 4) & SDHCI_STATE_DAT_MASK;
 		val32 |= (wrk32 >> 9) & SDHCI_RETUNE_REQUEST;
-		if (sc->force_card_present)
-			val32 |= SDHCI_CARD_PRESENT;
 		return (val32);
 	}
 
@@ -752,9 +752,15 @@ fsl_sdhci_get_ro(device_t bus, device_t child)
 {
 	struct fsl_sdhci_softc *sc = device_get_softc(bus);
 
-	if (RD4(sc, SDHCI_PRESENT_STATE) & SDHC_PRES_WPSPL)
-		return (false);
-	return (true);
+	return (sdhci_fdt_gpio_get_readonly(sc->gpio));
+}
+
+static bool
+fsl_sdhci_get_card_present(device_t dev, struct sdhci_slot *slot)
+{
+	struct fsl_sdhci_softc *sc = device_get_softc(dev);
+
+	return (sdhci_fdt_gpio_get_present(sc->gpio));
 }
 
 #ifdef __powerpc__
@@ -802,6 +808,7 @@ static int
 fsl_sdhci_detach(device_t dev)
 {
 
+	/* sdhci_fdt_gpio_teardown(sc->gpio); */
 	return (EBUSY);
 }
 
@@ -810,8 +817,8 @@ fsl_sdhci_attach(device_t dev)
 {
 	struct fsl_sdhci_softc *sc = device_get_softc(dev);
 	int rid, err;
-	phandle_t node;
 #ifdef __powerpc__
+	phandle_t node;
 	uint32_t protctl;
 #endif
 
@@ -887,24 +894,13 @@ fsl_sdhci_attach(device_t dev)
 	sc->slot.max_clk = sc->baseclk_hz;
 
 	/*
-	 * If the slot is flagged with the non-removable property, set our flag
-	 * to always force the SDHCI_CARD_PRESENT bit on.
-	 *
-	 * XXX Workaround for gpio-based card detect...
-	 *
-	 * We don't have gpio support yet.  If there's a cd-gpios property just
-	 * force the SDHCI_CARD_PRESENT bit on for now.  If there isn't really a
-	 * card there it will fail to probe at the mmc layer and nothing bad
-	 * happens except instantiating an mmcN device for an empty slot.
+	 * Set up any gpio pin handling described in the FDT data. This cannot
+	 * fail; see comments in sdhci_fdt_gpio.h for details.
 	 */
-	node = ofw_bus_get_node(dev);
-	if (OF_hasprop(node, "non-removable"))
-		sc->force_card_present = true;
-	else if (OF_hasprop(node, "cd-gpios")) {
-		/* XXX put real gpio hookup here. */
-		sc->force_card_present = true;
-	}
+	sc->gpio = sdhci_fdt_gpio_setup(dev, &sc->slot);
+
 #ifdef __powerpc__
+	node = ofw_bus_get_node(dev);
 	/* Default to big-endian on powerpc */
 	protctl = RD4(sc, SDHC_PROT_CTRL);
 	protctl &= ~SDHC_PROT_EMODE_MASK;
@@ -965,7 +961,6 @@ static device_method_t fsl_sdhci_methods[] = {
 	/* Bus interface */
 	DEVMETHOD(bus_read_ivar,	sdhci_generic_read_ivar),
 	DEVMETHOD(bus_write_ivar,	sdhci_generic_write_ivar),
-	DEVMETHOD(bus_print_child,	bus_generic_print_child),
 
 	/* MMC bridge interface */
 	DEVMETHOD(mmcbr_update_ios,	sdhci_generic_update_ios),
@@ -974,7 +969,7 @@ static device_method_t fsl_sdhci_methods[] = {
 	DEVMETHOD(mmcbr_acquire_host,	sdhci_generic_acquire_host),
 	DEVMETHOD(mmcbr_release_host,	sdhci_generic_release_host),
 
-	/* SDHCI registers accessors */
+	/* SDHCI accessors */
 	DEVMETHOD(sdhci_read_1,		fsl_sdhci_read_1),
 	DEVMETHOD(sdhci_read_2,		fsl_sdhci_read_2),
 	DEVMETHOD(sdhci_read_4,		fsl_sdhci_read_4),
@@ -983,8 +978,9 @@ static device_method_t fsl_sdhci_methods[] = {
 	DEVMETHOD(sdhci_write_2,	fsl_sdhci_write_2),
 	DEVMETHOD(sdhci_write_4,	fsl_sdhci_write_4),
 	DEVMETHOD(sdhci_write_multi_4,	fsl_sdhci_write_multi_4),
+	DEVMETHOD(sdhci_get_card_present,fsl_sdhci_get_card_present),
 
-	{ 0, 0 }
+	DEVMETHOD_END
 };
 
 static devclass_t fsl_sdhci_devclass;
@@ -995,7 +991,7 @@ static driver_t fsl_sdhci_driver = {
 	sizeof(struct fsl_sdhci_softc),
 };
 
-DRIVER_MODULE(sdhci_fsl, simplebus, fsl_sdhci_driver, fsl_sdhci_devclass, 0, 0);
+DRIVER_MODULE(sdhci_fsl, simplebus, fsl_sdhci_driver, fsl_sdhci_devclass,
+    NULL, NULL);
 MODULE_DEPEND(sdhci_fsl, sdhci, 1, 1, 1);
-DRIVER_MODULE(mmc, sdhci_fsl, mmc_driver, mmc_devclass, NULL, NULL);
-MODULE_DEPEND(sdhci_fsl, mmc, 1, 1, 1);
+MMC_DECLARE_BRIDGE(sdhci_fsl);

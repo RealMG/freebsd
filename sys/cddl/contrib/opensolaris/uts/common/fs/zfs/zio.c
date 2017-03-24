@@ -272,18 +272,33 @@ zio_fini(void)
  * useful to inspect ZFS metadata, but if possible, we should avoid keeping
  * excess / transient data in-core during a crashdump.
  */
-void *
-zio_buf_alloc(size_t size)
+static void *
+zio_buf_alloc_impl(size_t size, boolean_t canwait)
 {
 	size_t c = (size - 1) >> SPA_MINBLOCKSHIFT;
 	int flags = zio_exclude_metadata ? KM_NODEBUG : 0;
 
 	VERIFY3U(c, <, SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT);
 
-	if (zio_use_uma)
-		return (kmem_cache_alloc(zio_buf_cache[c], KM_PUSHPAGE));
-	else
-		return (kmem_alloc(size, KM_SLEEP|flags));
+	if (zio_use_uma) {
+		return (kmem_cache_alloc(zio_buf_cache[c],
+		    canwait ? KM_PUSHPAGE : KM_NOSLEEP));
+	} else {
+		return (kmem_alloc(size,
+		    (canwait ? KM_SLEEP : KM_NOSLEEP) | flags));
+	}
+}
+
+void *
+zio_buf_alloc(size_t size)
+{
+	return (zio_buf_alloc_impl(size, B_TRUE));
+}
+
+void *
+zio_buf_alloc_nowait(size_t size)
+{
+	return (zio_buf_alloc_impl(size, B_FALSE));
 }
 
 /*
@@ -563,9 +578,24 @@ zio_timestamp_compare(const void *x1, const void *x2)
 	if (z1->io_queued_timestamp > z2->io_queued_timestamp)
 		return (1);
 
-	if (z1->io_offset < z2->io_offset)
+	if (z1->io_bookmark.zb_objset < z2->io_bookmark.zb_objset)
 		return (-1);
-	if (z1->io_offset > z2->io_offset)
+	if (z1->io_bookmark.zb_objset > z2->io_bookmark.zb_objset)
+		return (1);
+
+	if (z1->io_bookmark.zb_object < z2->io_bookmark.zb_object)
+		return (-1);
+	if (z1->io_bookmark.zb_object > z2->io_bookmark.zb_object)
+		return (1);
+
+	if (z1->io_bookmark.zb_level < z2->io_bookmark.zb_level)
+		return (-1);
+	if (z1->io_bookmark.zb_level > z2->io_bookmark.zb_level)
+		return (1);
+
+	if (z1->io_bookmark.zb_blkid < z2->io_bookmark.zb_blkid)
+		return (-1);
+	if (z1->io_bookmark.zb_blkid > z2->io_bookmark.zb_blkid)
 		return (1);
 
 	if (z1 < z2)

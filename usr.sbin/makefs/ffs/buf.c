@@ -1,4 +1,4 @@
-/*	$NetBSD: buf.c,v 1.12 2004/06/20 22:20:18 jmc Exp $	*/
+/*	$NetBSD: buf.c,v 1.13 2004/06/20 22:20:18 jmc Exp $	*/
 
 /*
  * Copyright (c) 2001 Wasabi Systems, Inc.
@@ -60,42 +60,44 @@ extern int sectorsize;		/* XXX: from ffs.c & mkfs.c */
 TAILQ_HEAD(buftailhead,buf) buftail;
 
 int
-bread(int fd, struct fs *fs, daddr_t blkno, int size, struct buf **bpp)
+bread(struct vnode *vp, daddr_t blkno, int size, struct ucred *u1 __unused,
+    struct buf **bpp)
 {
 	off_t	offset;
 	ssize_t	rv;
+	struct fs *fs = vp->fs;
 
 	assert (fs != NULL);
 	assert (bpp != NULL);
 
 	if (debug & DEBUG_BUF_BREAD)
-		printf("bread: fs %p blkno %lld size %d\n",
-		    fs, (long long)blkno, size);
-	*bpp = getblk(fd, fs, blkno, size);
+		printf("%s: blkno %lld size %d\n", __func__, (long long)blkno,
+		    size);
+	*bpp = getblk(vp, blkno, size, 0, 0, 0);
 	offset = (*bpp)->b_blkno * sectorsize;	/* XXX */
 	if (debug & DEBUG_BUF_BREAD)
-		printf("bread: bp %p blkno %lld offset %lld bcount %ld\n",
-		    (*bpp), (long long)(*bpp)->b_blkno, (long long) offset,
+		printf("%s: blkno %lld offset %lld bcount %ld\n", __func__,
+		    (long long)(*bpp)->b_blkno, (long long) offset,
 		    (*bpp)->b_bcount);
 	if (lseek((*bpp)->b_fd, offset, SEEK_SET) == -1)
-		err(1, "bread: lseek %lld (%lld)",
+		err(1, "%s: lseek %lld (%lld)", __func__,
 		    (long long)(*bpp)->b_blkno, (long long)offset);
 	rv = read((*bpp)->b_fd, (*bpp)->b_data, (*bpp)->b_bcount);
 	if (debug & DEBUG_BUF_BREAD)
-		printf("bread: read %ld (%lld) returned %d\n",
+		printf("%s: read %ld (%lld) returned %d\n", __func__,
 		    (*bpp)->b_bcount, (long long)offset, (int)rv);
 	if (rv == -1)				/* read error */
-		err(1, "bread: read %ld (%lld) returned %d",
+		err(1, "%s: read %ld (%lld) returned %d", __func__,
 		    (*bpp)->b_bcount, (long long)offset, (int)rv);
 	else if (rv != (*bpp)->b_bcount)	/* short read */
-		err(1, "bread: read %ld (%lld) returned %d",
+		err(1, "%s: read %ld (%lld) returned %d", __func__,
 		    (*bpp)->b_bcount, (long long)offset, (int)rv);
 	else
 		return (0);
 }
 
 void
-brelse(struct buf *bp)
+brelse(struct buf *bp, int u1 __unused)
 {
 
 	assert (bp != NULL);
@@ -133,8 +135,8 @@ bwrite(struct buf *bp)
 	assert (bp != NULL);
 	offset = bp->b_blkno * sectorsize;	/* XXX */
 	if (debug & DEBUG_BUF_BWRITE)
-		printf("bwrite: bp %p blkno %lld offset %lld bcount %ld\n",
-		    bp, (long long)bp->b_blkno, (long long) offset,
+		printf("bwrite: blkno %lld offset %lld bcount %ld\n",
+		    (long long)bp->b_blkno, (long long) offset,
 		    bp->b_bcount);
 	if (lseek(bp->b_fd, offset, SEEK_SET) == -1)
 		return (errno);
@@ -174,16 +176,19 @@ bcleanup(void)
 }
 
 struct buf *
-getblk(int fd, struct fs *fs, daddr_t blkno, int size)
+getblk(struct vnode *vp, daddr_t blkno, int size, int u1 __unused,
+    int u2 __unused, int u3 __unused)
 {
 	static int buftailinitted;
 	struct buf *bp;
 	void *n;
+	int fd = vp->fd;
+	struct fs *fs = vp->fs;
 
+	blkno += vp->offset;
 	assert (fs != NULL);
 	if (debug & DEBUG_BUF_GETBLK)
-		printf("getblk: fs %p blkno %lld size %d\n", fs,
-		    (long long)blkno, size);
+		printf("getblk: blkno %lld size %d\n", (long long)blkno, size);
 
 	bp = NULL;
 	if (!buftailinitted) {

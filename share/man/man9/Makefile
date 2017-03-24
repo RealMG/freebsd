@@ -158,6 +158,9 @@ MAN=	accept_filter.9 \
 	ieee80211_regdomain.9 \
 	ieee80211_scan.9 \
 	ieee80211_vap.9 \
+	iflibdd.9 \
+	iflibdi.9 \
+	iflibtxrx.9 \
 	ifnet.9 \
 	inittodr.9 \
 	insmntque.9 \
@@ -1422,6 +1425,9 @@ MLINKS+=random.9 arc4rand.9 \
 	random.9 read_random.9 \
 	random.9 read_random_uio.9 \
 	random.9 srandom.9
+MLINKS+=random_harvest.9 random_harvest_direct.9 \
+	random_harvest.9 random_harvest_fast.9 \
+	random_harvest.9 random_harvest_queue.9
 MLINKS+=refcount.9 refcount_acquire.9 \
 	refcount.9 refcount_init.9 \
 	refcount.9 refcount_release.9
@@ -1514,6 +1520,7 @@ MLINKS+=sbuf.9 sbuf_bcat.9 \
 	sbuf.9 sbuf_done.9 \
 	sbuf.9 sbuf_error.9 \
 	sbuf.9 sbuf_finish.9 \
+	sbuf.9 sbuf_hexdump.9 \
 	sbuf.9 sbuf_len.9 \
 	sbuf.9 sbuf_new.9 \
 	sbuf.9 sbuf_new_auto.9 \
@@ -1712,6 +1719,7 @@ MLINKS+=sysctl.9 SYSCTL_DECL.9 \
 	sysctl.9 SYSCTL_ADD_INT.9 \
 	sysctl.9 SYSCTL_ADD_LONG.9 \
 	sysctl.9 SYSCTL_ADD_NODE.9 \
+	sysctl.9 SYSCTL_ADD_NODE_WITH_LABEL.9 \
 	sysctl.9 SYSCTL_ADD_OPAQUE.9 \
 	sysctl.9 SYSCTL_ADD_PROC.9 \
 	sysctl.9 SYSCTL_ADD_QUAD.9 \
@@ -1735,8 +1743,10 @@ MLINKS+=sysctl.9 SYSCTL_DECL.9 \
 	sysctl.9 SYSCTL_NODE_CHILDREN.9 \
 	sysctl.9 SYSCTL_PARENT.9 \
 	sysctl.9 SYSCTL_INT.9 \
+	sysctl.9 SYSCTL_INT_WITH_LABEL.9 \
 	sysctl.9 SYSCTL_LONG.9 \
 	sysctl.9 SYSCTL_NODE.9 \
+	sysctl.9 SYSCTL_NODE_WITH_LABEL.9 \
 	sysctl.9 SYSCTL_OPAQUE.9 \
 	sysctl.9 SYSCTL_PROC.9 \
 	sysctl.9 SYSCTL_QUAD.9 \
@@ -1833,6 +1843,7 @@ MLINKS+=uidinfo.9 uifind.9 \
 	uidinfo.9 uihashinit.9 \
 	uidinfo.9 uihold.9
 MLINKS+=uio.9 uiomove.9 \
+	uio.9 uiomove_frombuf.9 \
 	uio.9 uiomove_nofault.9
 
 .if ${MK_USB} != "no"

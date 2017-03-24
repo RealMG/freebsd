@@ -229,6 +229,7 @@ enum {
 	INTERPOS_ppoll,
 	INTERPOS_map_stacks_exec,
 	INTERPOS_fdatasync,
+	INTERPOS_clock_nanosleep,
 	INTERPOS_MAX
 };
 
@@ -272,6 +273,8 @@ void _malloc_thread_cleanup(void);
  * thread is exiting, so its thread-local dtors should be called.
  */
 void __cxa_thread_call_dtors(void);
+int __cxa_thread_atexit_hidden(void (*dtor_func)(void *), void *obj,
+    void *dso_symbol) __hidden;
 
 /*
  * These functions are used by the threading libraries in order to protect
@@ -316,6 +319,8 @@ int		__sys_aio_suspend(const struct aiocb * const[], int,
 int		__sys_accept(int, struct sockaddr *, __socklen_t *);
 int		__sys_accept4(int, struct sockaddr *, __socklen_t *, int);
 int		__sys_clock_gettime(__clockid_t, struct timespec *ts);
+int		__sys_clock_nanosleep(__clockid_t, int,
+		    const struct timespec *, struct timespec *);
 int		__sys_close(int);
 int		__sys_connect(int, const struct sockaddr *, __socklen_t);
 int		__sys_fcntl(int, int, ...);
