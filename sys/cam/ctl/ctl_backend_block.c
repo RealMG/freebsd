@@ -2324,7 +2324,7 @@ ctl_be_block_create(struct ctl_be_block_softc *softc, struct ctl_lun_req *req)
 	cbe_lun->be = &ctl_be_block_driver;
 
 	if ((params->flags & CTL_LUN_FLAG_SERIAL_NUM) == 0) {
-		snprintf(tmpstr, sizeof(tmpstr), "MYSERIAL%4d",
+		snprintf(tmpstr, sizeof(tmpstr), "MYSERIAL%04d",
 			 softc->num_luns);
 		strncpy((char *)cbe_lun->serial_num, tmpstr,
 			MIN(sizeof(cbe_lun->serial_num), sizeof(tmpstr)));
@@ -2338,7 +2338,7 @@ ctl_be_block_create(struct ctl_be_block_softc *softc, struct ctl_lun_req *req)
 			sizeof(params->serial_num)));
 	}
 	if ((params->flags & CTL_LUN_FLAG_DEVID) == 0) {
-		snprintf(tmpstr, sizeof(tmpstr), "MYDEVID%4d", softc->num_luns);
+		snprintf(tmpstr, sizeof(tmpstr), "MYDEVID%04d", softc->num_luns);
 		strncpy((char *)cbe_lun->device_id, tmpstr,
 			MIN(sizeof(cbe_lun->device_id), sizeof(tmpstr)));
 
@@ -2650,11 +2650,8 @@ bailout_error:
 static void
 ctl_be_block_lun_shutdown(void *be_lun)
 {
-	struct ctl_be_block_lun *lun;
-	struct ctl_be_block_softc *softc;
-
-	lun = (struct ctl_be_block_lun *)be_lun;
-	softc = lun->softc;
+	struct ctl_be_block_lun *lun = be_lun;
+	struct ctl_be_block_softc *softc = lun->softc;
 
 	mtx_lock(&softc->lock);
 	lun->flags |= CTL_BE_BLOCK_LUN_UNCONFIGURED;

@@ -92,6 +92,8 @@ __FBSDID("$FreeBSD$");
 #include <netinet6/ip6_var.h>
 #endif
 
+#include <net/if_gre.h> /* for struct grehdr */
+
 #include <netpfil/ipfw/ip_fw_private.h>
 
 #include <machine/in_cksum.h>	/* XXX for in_cksum */
@@ -992,7 +994,6 @@ ipfw_chk(struct ip_fw_args *args)
 	int is_ipv4 = 0;
 
 	int done = 0;		/* flag to exit the outer loop */
-	IPFW_RLOCK_TRACKER;
 
 	if (m->m_flags & M_SKIP_FIREWALL || (! V_ipfw_vnet_ready))
 		return (IP_FW_PASS);	/* accept */
@@ -1161,6 +1162,11 @@ do {								\
 			case IPPROTO_PIM:
 				/* XXX PIM header check? */
 				PULLUP_TO(hlen, ulp, struct pim);
+				break;
+
+			case IPPROTO_GRE:	/* RFC 1701 */
+				/* XXX GRE header check? */
+				PULLUP_TO(hlen, ulp, struct grehdr);
 				break;
 
 			case IPPROTO_CARP:
@@ -1603,10 +1609,7 @@ do {								\
 
 			case O_IP_SRC_ME:
 				if (is_ipv4) {
-					struct ifnet *tif;
-
-					INADDR_TO_IFP(src_ip, tif);
-					match = (tif != NULL);
+					match = in_localip(src_ip);
 					break;
 				}
 #ifdef INET6
@@ -1642,10 +1645,7 @@ do {								\
 
 			case O_IP_DST_ME:
 				if (is_ipv4) {
-					struct ifnet *tif;
-
-					INADDR_TO_IFP(dst_ip, tif);
-					match = (tif != NULL);
+					match = in_localip(dst_ip);
 					break;
 				}
 #ifdef INET6
@@ -2616,8 +2616,17 @@ do {								\
 				 * consider this as rule matching and
 				 * update counters.
 				 */
-				if (retval == 0 && done == 0)
+				if (retval == 0 && done == 0) {
 					IPFW_INC_RULE_COUNTER(f, pktlen);
+					/*
+					 * Reset the result of the last
+					 * dynamic state lookup.
+					 * External action can change
+					 * @args content, and it may be
+					 * used for new state lookup later.
+					 */
+					dyn_dir = MATCH_UNKNOWN;
+				}
 				break;
 
 			default:

@@ -139,7 +139,7 @@ static int bd_ioctl(struct open_file *f, u_long cmd, void *data);
 static int bd_print(int verbose);
 
 #ifdef LOADER_GELI_SUPPORT
-static enum isgeli {
+enum isgeli {
 	ISGELI_UNKNOWN,
 	ISGELI_NO,
 	ISGELI_YES
@@ -472,6 +472,11 @@ bd_open(struct open_file *f, ...)
 		}
 		if (geli_taste(bios_read, &dskp,
 		    entry->part.end - entry->part.start) == 0) {
+			if (geli_havekey(&dskp) == 0) {
+				geli_status[dev->d_unit][dskp.slice] = ISGELI_YES;
+				geli_part++;
+				continue;
+			}
 			if ((passphrase = getenv("kern.geom.eli.passphrase"))
 			    != NULL) {
 				/* Use the cached passphrase */
@@ -484,6 +489,7 @@ bd_open(struct open_file *f, ...)
 				bzero(gelipw, sizeof(gelipw));
 				geli_status[dev->d_unit][dskp.slice] = ISGELI_YES;
 				geli_part++;
+				continue;
 			}
 		} else
 			geli_status[dev->d_unit][dskp.slice] = ISGELI_NO;
@@ -612,7 +618,7 @@ bd_realstrategy(void *devdata, int rw, daddr_t dblk, size_t size,
 	DEBUG("short read %d", blks);
     }
 
-    switch(rw){
+    switch (rw & F_MASK) {
     case F_READ:
 	DEBUG("read %d from %lld to %p", blks, dblk, buf);
 

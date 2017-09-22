@@ -33,7 +33,6 @@
 #include <sys/bus.h>
 #include <sys/cpuset.h>
 #include <machine/bus.h>
-#include <sys/bus_dma.h>
 #include <sys/nv.h>
 #include <sys/gtaskqueue.h>
 
@@ -201,8 +200,6 @@ typedef struct if_softc_ctx {
 	uint8_t isc_txd_size[8];
 	uint8_t isc_rxd_size[8];
 
-	int isc_max_txqsets;
-	int isc_max_rxqsets;
 	int isc_tx_tso_segments_max;
 	int isc_tx_tso_size_max;
 	int isc_tx_tso_segsize_max;
@@ -215,7 +212,9 @@ typedef struct if_softc_ctx {
 
 	iflib_intr_mode_t isc_intr;
 	uint16_t isc_max_frame_size; /* set at init time by driver */
+	uint32_t isc_pause_frames;   /* set by driver for iflib_timer to detect */
 	pci_vendor_info_t isc_vendor_info;	/* set by iflib prior to attach_pre */
+	int isc_disable_msix;
 	if_txrx_t isc_txrx;
 } *if_softc_ctx_t;
 

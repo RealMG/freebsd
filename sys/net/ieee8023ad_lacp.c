@@ -463,7 +463,11 @@ lacp_linkstate(struct lagg_port *lgp)
 	uint16_t old_key;
 
 	bzero((char *)&ifmr, sizeof(ifmr));
-	error = (*ifp->if_ioctl)(ifp, SIOCGIFMEDIA, (caddr_t)&ifmr);
+	error = (*ifp->if_ioctl)(ifp, SIOCGIFXMEDIA, (caddr_t)&ifmr);
+	if (error != 0) {
+		bzero((char *)&ifmr, sizeof(ifmr));
+		error = (*ifp->if_ioctl)(ifp, SIOCGIFMEDIA, (caddr_t)&ifmr);
+	}
 	if (error != 0)
 		return;
 
@@ -1121,6 +1125,7 @@ lacp_compose_key(struct lacp_port *lp)
 		case IFM_10G_CR1:
 		case IFM_10G_ER:
 		case IFM_10G_SFI:
+		case IFM_10G_AOC:
 			key = IFM_10G_LR;
 			break;
 		case IFM_20G_KR2:
@@ -1145,6 +1150,9 @@ lacp_compose_key(struct lacp_port *lp)
 		case IFM_25G_CR:
 		case IFM_25G_KR:
 		case IFM_25G_SR:
+		case IFM_25G_LR:
+		case IFM_25G_ACC:
+		case IFM_25G_AOC:
 			key = IFM_25G_PCIE;
 			break;
 		case IFM_40G_CR4:

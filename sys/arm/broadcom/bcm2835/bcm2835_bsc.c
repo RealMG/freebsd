@@ -55,6 +55,7 @@ __FBSDID("$FreeBSD$");
 static struct ofw_compat_data compat_data[] = {
 	{"broadcom,bcm2835-bsc",	1},
 	{"brcm,bcm2708-i2c",		1},
+	{"brcm,bcm2835-i2c",		1},
 	{NULL,				0}
 };
 
@@ -308,7 +309,10 @@ bcm_bsc_attach(device_t dev)
 		return (ENXIO);
 	}
 
-	return (bus_generic_attach(dev));
+	/* Probe and attach the iicbus when interrupts are available. */
+	config_intrhook_oneshot((ich_func_t)bus_generic_attach, dev);
+
+	return (0);
 }
 
 static int

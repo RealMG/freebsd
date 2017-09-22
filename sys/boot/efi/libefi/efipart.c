@@ -101,16 +101,33 @@ static pdinfo_list_t hdinfo;
 static EFI_HANDLE *efipart_handles = NULL;
 static UINTN efipart_nhandles = 0;
 
-static pdinfo_t *
-efiblk_get_pdinfo(pdinfo_list_t *pdi, int unit)
+pdinfo_list_t *
+efiblk_get_pdinfo_list(struct devsw *dev)
 {
-	pdinfo_t *pd;
+	if (dev->dv_type == DEVT_DISK)
+		return (&hdinfo);
+	if (dev->dv_type == DEVT_CD)
+		return (&cdinfo);
+	if (dev->dv_type == DEVT_FD)
+		return (&fdinfo);
+	return (NULL);
+}
+
+pdinfo_t *
+efiblk_get_pdinfo(struct devdesc *dev)
+{
+	pdinfo_list_t *pdi;
+	pdinfo_t *pd = NULL;
+
+	pdi = efiblk_get_pdinfo_list(dev->d_dev);
+	if (pdi == NULL)
+		return (pd);
 
 	STAILQ_FOREACH(pd, pdi, pd_link) {
-		if (pd->pd_unit == unit)
+		if (pd->pd_unit == dev->d_unit)
 			return (pd);
 	}
-	return (NULL);
+	return (pd);
 }
 
 static int
@@ -181,12 +198,11 @@ efipart_fdinfo_add(EFI_HANDLE handle, uint32_t uid, EFI_DEVICE_PATH *devpath)
 {
 	pdinfo_t *fd;
 
-	fd = malloc(sizeof(pdinfo_t));
+	fd = calloc(1, sizeof(pdinfo_t));
 	if (fd == NULL) {
 		printf("Failed to register floppy %d, out of memory\n", uid);
 		return (ENOMEM);
 	}
-	memset(fd, 0, sizeof(pdinfo_t));
 	STAILQ_INIT(&fd->pd_part);
 
 	fd->pd_unit = uid;
@@ -247,7 +263,7 @@ efipart_cdinfo_add(EFI_HANDLE handle, EFI_HANDLE alias,
 
 	unit = 0;
 	STAILQ_FOREACH(pd, &cdinfo, pd_link) {
-		if (efi_devpath_match(pd->pd_devpath, devpath) != 0) {
+		if (efi_devpath_match(pd->pd_devpath, devpath) == true) {
 			pd->pd_handle = handle;
 			pd->pd_alias = alias;
 			return (0);
@@ -255,12 +271,11 @@ efipart_cdinfo_add(EFI_HANDLE handle, EFI_HANDLE alias,
 		unit++;
 	}
 
-	cd = malloc(sizeof(pdinfo_t));
+	cd = calloc(1, sizeof(pdinfo_t));
 	if (cd == NULL) {
 		printf("Failed to add cd %d, out of memory\n", unit);
 		return (ENOMEM);
 	}
-	memset(cd, 0, sizeof(pdinfo_t));
 	STAILQ_INIT(&cd->pd_part);
 
 	cd->pd_handle = handle;
@@ -368,16 +383,15 @@ efipart_hdinfo_add(EFI_HANDLE disk_handle, EFI_HANDLE part_handle)
 	if (node == NULL)
 		return (ENOENT);	/* This should not happen. */
 
-	pd = malloc(sizeof(pdinfo_t));
+	pd = calloc(1, sizeof(pdinfo_t));
 	if (pd == NULL) {
 		printf("Failed to add disk, out of memory\n");
 		return (ENOMEM);
 	}
-	memset(pd, 0, sizeof(pdinfo_t));
 	STAILQ_INIT(&pd->pd_part);
 
 	STAILQ_FOREACH(hd, &hdinfo, pd_link) {
-		if (efi_devpath_match(hd->pd_devpath, disk_devpath) != 0) {
+		if (efi_devpath_match(hd->pd_devpath, disk_devpath) == true) {
 			/* Add the partition. */
 			pd->pd_handle = part_handle;
 			pd->pd_unit = node->PartitionNumber;
@@ -400,12 +414,11 @@ efipart_hdinfo_add(EFI_HANDLE disk_handle, EFI_HANDLE part_handle)
 	hd->pd_devpath = disk_devpath;
 	STAILQ_INSERT_TAIL(&hdinfo, hd, pd_link);
 
-	pd = malloc(sizeof(pdinfo_t));
+	pd = calloc(1, sizeof(pdinfo_t));
 	if (pd == NULL) {
 		printf("Failed to add partition, out of memory\n");
 		return (ENOMEM);
 	}
-	memset(pd, 0, sizeof(pdinfo_t));
 	STAILQ_INIT(&pd->pd_part);
 
 	/* Add the partition. */
@@ -439,12 +452,11 @@ efipart_hdinfo_add_filepath(EFI_HANDLE disk_handle)
 	if (node == NULL)
 		return (ENOENT);	/* This should not happen. */
 
-	pd = malloc(sizeof(pdinfo_t));
+	pd = calloc(1, sizeof(pdinfo_t));
 	if (pd == NULL) {
 		printf("Failed to add disk, out of memory\n");
 		return (ENOMEM);
 	}
-	memset(pd, 0, sizeof(pdinfo_t));
 	STAILQ_INIT(&pd->pd_part);
 	last = STAILQ_LAST(&hdinfo, pdinfo, pd_link);
 	if (last != NULL)
@@ -671,24 +683,11 @@ efipart_printhd(int verbose)
 	return (efipart_print_common(&efipart_hddev, &hdinfo, verbose));
 }
 
-pdinfo_list_t *
-efiblk_get_pdinfo_list(struct devsw *dev)
-{
-	if (dev->dv_type == DEVT_DISK)
-		return (&hdinfo);
-	if (dev->dv_type == DEVT_CD)
-		return (&cdinfo);
-	if (dev->dv_type == DEVT_FD)
-		return (&fdinfo);
-	return (NULL);
-}
-
 static int
 efipart_open(struct open_file *f, ...)
 {
 	va_list args;
 	struct disk_devdesc *dev;
-	pdinfo_list_t *pdi;
 	pdinfo_t *pd;
 	EFI_BLOCK_IO *blkio;
 	EFI_STATUS status;
@@ -699,11 +698,7 @@ efipart_open(struct open_file *f, ...)
 	if (dev == NULL)
 		return (EINVAL);
 
-	pdi = efiblk_get_pdinfo_list(dev->d_dev);
-	if (pdi == NULL)
-		return (EINVAL);
-
-	pd = efiblk_get_pdinfo(pdi, dev->d_unit);
+	pd = efiblk_get_pdinfo((struct devdesc *)dev);
 	if (pd == NULL)
 		return (EIO);
 
@@ -723,9 +718,20 @@ efipart_open(struct open_file *f, ...)
 		pd->pd_bcache = bcache_allocate();
 
 	if (dev->d_dev->dv_type == DEVT_DISK) {
-		return (disk_open(dev,
+		int rc;
+
+		rc = disk_open(dev,
 		    blkio->Media->BlockSize * (blkio->Media->LastBlock + 1),
-		    blkio->Media->BlockSize));
+		    blkio->Media->BlockSize);
+		if (rc != 0) {
+			pd->pd_open--;
+			if (pd->pd_open == 0) {
+				pd->pd_blkio = NULL;
+				bcache_free(pd->pd_bcache);
+				pd->pd_bcache = NULL;
+			}
+		}
+		return (rc);
 	}
 	return (0);
 }
@@ -734,17 +740,13 @@ static int
 efipart_close(struct open_file *f)
 {
 	struct disk_devdesc *dev;
-	pdinfo_list_t *pdi;
 	pdinfo_t *pd;
 
 	dev = (struct disk_devdesc *)(f->f_devdata);
 	if (dev == NULL)
 		return (EINVAL);
-	pdi = efiblk_get_pdinfo_list(dev->d_dev);
-	if (pdi == NULL)
-		return (EINVAL);
 
-	pd = efiblk_get_pdinfo(pdi, dev->d_unit);
+	pd = efiblk_get_pdinfo((struct devdesc *)dev);
 	if (pd == NULL)
 		return (EINVAL);
 
@@ -763,18 +765,14 @@ static int
 efipart_ioctl(struct open_file *f, u_long cmd, void *data)
 {
 	struct disk_devdesc *dev;
-	pdinfo_list_t *pdi;
 	pdinfo_t *pd;
 	int rc;
 
 	dev = (struct disk_devdesc *)(f->f_devdata);
 	if (dev == NULL)
 		return (EINVAL);
-	pdi = efiblk_get_pdinfo_list(dev->d_dev);
-	if (pdi == NULL)
-		return (EINVAL);
 
-	pd = efiblk_get_pdinfo(pdi, dev->d_unit);
+	pd = efiblk_get_pdinfo((struct devdesc *)dev);
 	if (pd == NULL)
 		return (EINVAL);
 
@@ -819,7 +817,7 @@ efipart_readwrite(EFI_BLOCK_IO *blkio, int rw, daddr_t blk, daddr_t nblks,
 	if ((blk + nblks - 1) > blkio->Media->LastBlock)
 		return (EIO);
 
-	switch (rw) {
+	switch (rw & F_MASK) {
 	case F_READ:
 		status = blkio->ReadBlocks(blkio, blkio->Media->MediaId, blk,
 		    nblks * blkio->Media->BlockSize, buf);
@@ -834,8 +832,10 @@ efipart_readwrite(EFI_BLOCK_IO *blkio, int rw, daddr_t blk, daddr_t nblks,
 		return (ENOSYS);
 	}
 
-	if (EFI_ERROR(status))
-		printf("%s: rw=%d, status=%lu\n", __func__, rw, (u_long)status);
+	if (EFI_ERROR(status)) {
+		printf("%s: rw=%d, blk=%ju size=%ju status=%lu\n", __func__, rw,
+		    blk, nblks, EFI_ERROR_CODE(status));
+	}
 	return (efi_status_to_errno(status));
 }
 
@@ -845,19 +845,19 @@ efipart_strategy(void *devdata, int rw, daddr_t blk, size_t size,
 {
 	struct bcache_devdata bcd;
 	struct disk_devdesc *dev;
-	pdinfo_list_t *pdi;
 	pdinfo_t *pd;
 
 	dev = (struct disk_devdesc *)devdata;
 	if (dev == NULL)
 		return (EINVAL);
-	pdi = efiblk_get_pdinfo_list(dev->d_dev);
-	if (pdi == NULL)
-		return (EINVAL);
 
-	pd = efiblk_get_pdinfo(pdi, dev->d_unit);
+	pd = efiblk_get_pdinfo((struct devdesc *)dev);
 	if (pd == NULL)
 		return (EINVAL);
+
+	if (pd->pd_blkio->Media->RemovableMedia &&
+	    !pd->pd_blkio->Media->MediaPresent)
+		return (EIO);
 
 	bcd.dv_strategy = efipart_realstrategy;
 	bcd.dv_devdata = devdata;
@@ -875,22 +875,18 @@ efipart_realstrategy(void *devdata, int rw, daddr_t blk, size_t size,
     char *buf, size_t *rsize)
 {
 	struct disk_devdesc *dev = (struct disk_devdesc *)devdata;
-	pdinfo_list_t *pdi;
 	pdinfo_t *pd;
 	EFI_BLOCK_IO *blkio;
-	off_t off;
+	uint64_t off, disk_blocks, d_offset = 0;
 	char *blkbuf;
 	size_t blkoff, blksz;
 	int error;
+	size_t diskend, readstart;
 
 	if (dev == NULL || blk < 0)
 		return (EINVAL);
 
-	pdi = efiblk_get_pdinfo_list(dev->d_dev);
-	if (pdi == NULL)
-		return (EINVAL);
-
-	pd = efiblk_get_pdinfo(pdi, dev->d_unit);
+	pd = efiblk_get_pdinfo((struct devdesc *)dev);
 	if (pd == NULL)
 		return (EINVAL);
 
@@ -902,11 +898,33 @@ efipart_realstrategy(void *devdata, int rw, daddr_t blk, size_t size,
 		return (EIO);
 
 	off = blk * 512;
+	/*
+	 * Get disk blocks, this value is either for whole disk or for
+	 * partition.
+	 */
+	disk_blocks = 0;
+	if (dev->d_dev->dv_type == DEVT_DISK) {
+		if (disk_ioctl(dev, DIOCGMEDIASIZE, &disk_blocks) == 0) {
+			/* DIOCGMEDIASIZE does return bytes. */
+			disk_blocks /= blkio->Media->BlockSize;
+		}
+		d_offset = dev->d_offset;
+	}
+	if (disk_blocks == 0)
+		disk_blocks = blkio->Media->LastBlock + 1 - d_offset;
+
 	/* make sure we don't read past disk end */
-	if ((off + size) / blkio->Media->BlockSize - 1 >
-	    blkio->Media->LastBlock) {
-		size = blkio->Media->LastBlock + 1 -
-		    off / blkio->Media->BlockSize;
+	if ((off + size) / blkio->Media->BlockSize > d_offset + disk_blocks) {
+		diskend = d_offset + disk_blocks;
+		readstart = off / blkio->Media->BlockSize;
+
+		if (diskend <= readstart) {
+			if (rsize != NULL)
+				*rsize = 0;
+
+			return (EIO);
+		}
+		size = diskend - readstart;
 		size = size * blkio->Media->BlockSize;
 	}
 
@@ -914,9 +932,9 @@ efipart_realstrategy(void *devdata, int rw, daddr_t blk, size_t size,
 		*rsize = size;
 
 	if ((size % blkio->Media->BlockSize == 0) &&
-	    ((blk * 512) % blkio->Media->BlockSize == 0))
+	    (off % blkio->Media->BlockSize == 0))
 		return (efipart_readwrite(blkio, rw,
-		    blk * 512 / blkio->Media->BlockSize,
+		    off / blkio->Media->BlockSize,
 		    size / blkio->Media->BlockSize, buf));
 
 	/*
