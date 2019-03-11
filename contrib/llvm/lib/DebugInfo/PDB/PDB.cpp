@@ -16,6 +16,7 @@
 #endif
 #include "llvm/DebugInfo/PDB/Native/NativeSession.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/MemoryBuffer.h"
 
 using namespace llvm;
 using namespace llvm::pdb;
@@ -23,13 +24,20 @@ using namespace llvm::pdb;
 Error llvm::pdb::loadDataForPDB(PDB_ReaderType Type, StringRef Path,
                                 std::unique_ptr<IPDBSession> &Session) {
   // Create the correct concrete instance type based on the value of Type.
-  if (Type == PDB_ReaderType::Native)
-    return NativeSession::createFromPdb(Path, Session);
+  if (Type == PDB_ReaderType::Native) {
+    ErrorOr<std::unique_ptr<MemoryBuffer>> ErrorOrBuffer =
+        MemoryBuffer::getFileOrSTDIN(Path, /*FileSize=*/-1,
+                                     /*RequiresNullTerminator=*/false);
+    if (!ErrorOrBuffer)
+      return errorCodeToError(ErrorOrBuffer.getError());
+
+    return NativeSession::createFromPdb(std::move(*ErrorOrBuffer), Session);
+  }
 
 #if LLVM_ENABLE_DIA_SDK
   return DIASession::createFromPdb(Path, Session);
 #else
-  return make_error<GenericError>("DIA is not installed on the system");
+  return make_error<PDBError>(pdb_error_code::dia_sdk_not_present);
 #endif
 }
 
@@ -42,6 +50,6 @@ Error llvm::pdb::loadDataForEXE(PDB_ReaderType Type, StringRef Path,
 #if LLVM_ENABLE_DIA_SDK
   return DIASession::createFromExe(Path, Session);
 #else
-  return make_error<GenericError>("DIA is not installed on the system");
+  return make_error<PDBError>(pdb_error_code::dia_sdk_not_present);
 #endif
 }

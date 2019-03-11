@@ -8,7 +8,7 @@
  *
  * 1. Copyright Notice
  *
- * Some or all of this work - Copyright (c) 1999 - 2017, Intel Corp.
+ * Some or all of this work - Copyright (c) 1999 - 2019, Intel Corp.
  * All rights reserved.
  *
  * 2. License
@@ -159,7 +159,8 @@
 #endif
 
 
-#define ACPI_DEBUG_BUFFER_SIZE  0x4000      /* 16K buffer for return objects */
+#define ACPI_DEBUG_BUFFER_SIZE      0x4000      /* 16K buffer for return objects */
+#define ACPI_DEBUG_LENGTH_FORMAT    " (%.4X bits, %.3X bytes)"
 
 typedef struct acpi_db_command_info
 {
@@ -450,6 +451,12 @@ AcpiDbExecute (
     char                    **Args,
     ACPI_OBJECT_TYPE        *Types,
     UINT32                  Flags);
+
+void
+AcpiDbCreateExecutionThread (
+    char                    *MethodNameArg,
+    char                    **Arguments,
+    ACPI_OBJECT_TYPE        *Types);
 
 void
 AcpiDbCreateExecutionThreads (

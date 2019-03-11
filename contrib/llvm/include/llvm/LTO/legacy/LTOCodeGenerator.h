@@ -48,6 +48,9 @@
 #include <string>
 #include <vector>
 
+/// Enable global value internalization in LTO.
+extern llvm::cl::opt<bool> EnableLTOInternalization;
+
 namespace llvm {
 template <typename T> class ArrayRef;
   class LLVMContext;
@@ -184,6 +187,7 @@ struct LTOCodeGenerator {
   LLVMContext &getContext() { return Context; }
 
   void resetMergedModule() { MergedModule.reset(); }
+  void DiagnosticHandler(const DiagnosticInfo &DI);
 
 private:
   void initializeLTOPasses();
@@ -203,10 +207,6 @@ private:
 
   bool determineTarget();
   std::unique_ptr<TargetMachine> createTargetMachine();
-
-  static void DiagnosticHandler(const DiagnosticInfo &DI, void *Context);
-
-  void DiagnosticHandler2(const DiagnosticInfo &DI);
 
   void emitError(const std::string &ErrMsg);
   void emitWarning(const std::string &ErrMsg);
@@ -236,11 +236,11 @@ private:
   unsigned OptLevel = 2;
   lto_diagnostic_handler_t DiagHandler = nullptr;
   void *DiagContext = nullptr;
-  bool ShouldInternalize = true;
+  bool ShouldInternalize = EnableLTOInternalization;
   bool ShouldEmbedUselists = false;
   bool ShouldRestoreGlobalsLinkage = false;
   TargetMachine::CodeGenFileType FileType = TargetMachine::CGFT_ObjectFile;
-  std::unique_ptr<tool_output_file> DiagnosticOutputFile;
+  std::unique_ptr<ToolOutputFile> DiagnosticOutputFile;
   bool Freestanding = false;
 };
 }

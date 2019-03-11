@@ -221,23 +221,6 @@ options 	NPX_DEBUG	# enable npx debugging
 #
 options 	PERFMON
 
-#
-# XBOX causes the kernel to be bootable on the Microsoft XBox console system.
-# The resulting kernel will auto-detect whether it is being booted on a XBox,
-# so kernels compiled with this option will also work on an ordinary PC.
-# This option require I686_CPU.
-#
-# xboxfb includes support for the XBox frame buffer device. It is fully USB-
-# keyboard aware, and will only be used if an xbox is detected. This option
-# (obviously) requires XBOX support in your kernel.
-#
-# NOTE: xboxfb currently conflicts with syscons(4); if you have an XBOX and
-# include both in your kernel; you will not get any video output. Ordinary
-# PC's do not suffer from this.
-#
-options 	XBOX
-device		xboxfb
-
 
 #####################################################################
 # NETWORKING OPTIONS
@@ -506,25 +489,6 @@ device		aibs
 # The cpufreq(4) driver provides support for non-ACPI CPU frequency control
 device		cpufreq
 
-# Direct Rendering modules for 3D acceleration.
-device		drm		# DRM core module required by DRM drivers
-device		mach64drm	# ATI Rage Pro, Rage Mobility P/M, Rage XL
-device		mgadrm		# AGP Matrox G200, G400, G450, G550
-device		r128drm		# ATI Rage 128
-device		savagedrm	# S3 Savage3D, Savage4
-device		sisdrm		# SiS 300/305, 540, 630
-device		tdfxdrm		# 3dfx Voodoo 3/4/5 and Banshee
-device		viadrm		# VIA
-options 	DRM_DEBUG	# Include debug printfs (slow)
-
-#
-# mse: Logitech and ATI InPort bus mouse ports
-
-device		mse
-hint.mse.0.at="isa"
-hint.mse.0.port="0x23c"
-hint.mse.0.irq="5"
-
 #
 # Network interfaces:
 #
@@ -545,21 +509,18 @@ hint.mse.0.irq="5"
 # ed:   Western Digital and SMC 80xx; Novell NE1000 and NE2000; 3Com 3C503
 #       HP PC Lan+, various PC Card devices
 #       (requires miibus)
-# ie:   AT&T StarLAN 10 and EN100; 3Com 3C507; unknown NI5210;
-#       Intel EtherExpress
 # ipw:	Intel PRO/Wireless 2100 IEEE 802.11 adapter
 # iwi:	Intel PRO/Wireless 2200BG/2225BG/2915ABG IEEE 802.11 adapters
 #	Requires the iwi firmware module
 # iwn:	Intel Wireless WiFi Link 1000/105/135/2000/4965/5000/6000/6050 abgn
 #	802.11 network adapters
 #	Requires the iwn firmware module
+# mthca: Mellanox HCA InfiniBand
 # mlx4ib: Mellanox ConnectX HCA InfiniBand
 # mlx4en: Mellanox ConnectX HCA Ethernet
-# mthca: Mellanox HCA InfiniBand
 # nfe:	nVidia nForce MCP on-board Ethernet Networking (BSD open source)
 # sbni: Granch SBNI12-xx ISA and PCI adapters
 # vmx:	VMware VMXNET3 Ethernet (BSD open source)
-# wl:   Lucent Wavelan (ISA card only).
 # wpi:	Intel 3945ABG Wireless LAN controller
 #	Requires the wpi firmware module
 
@@ -593,10 +554,10 @@ hint.le.0.at="isa"
 hint.le.0.port="0x280"
 hint.le.0.irq="10"
 hint.le.0.drq="0"
+device  	mthca		# Mellanox HCA InfiniBand
 device		mlx4		# Shared code module between IB and Ethernet
 device  	mlx4ib		# Mellanox ConnectX HCA InfiniBand
 device  	mlx4en		# Mellanox ConnectX HCA Ethernet
-device  	mthca		# Mellanox HCA InfiniBand
 device		nfe		# nVidia nForce MCP on-board Ethernet
 device		sbni
 hint.sbni.0.at="isa"
@@ -685,20 +646,6 @@ options 	TWA_DEBUG		# 0-10; 10 prints the most messages.
 device		twa			# 3ware 9000 series PATA/SATA RAID
 
 #
-# SCSI host adapters:
-#
-# ncv: NCR 53C500 based SCSI host adapters.
-# nsp: Workbit Ninja SCSI-3 based PC Card SCSI host adapters.
-# stg: TMC 18C30, 18C50 based SCSI host adapters.
-
-device		ncv
-device		nsp
-device		stg
-hint.stg.0.at="isa"
-hint.stg.0.port="0x140"
-hint.stg.0.port="11"
-
-#
 # Adaptec FSA RAID controllers, including integrated DELL controllers,
 # the Dell PERC 2/QC and the HP NetRAID-4M
 device		aac
@@ -728,6 +675,11 @@ device		hptrr
 #
 # Highpoint RocketRaid 3xxx series SATA RAID
 device		hptiop
+
+#
+# Intel integrated Memory Controller (iMC) SMBus controller
+#	Sandybridge-Xeon, Ivybridge-Xeon, Haswell-Xeon, Broadwell-Xeon
+device		imcsmb
 
 #
 # IBM (now Adaptec) ServeRAID controllers
@@ -796,7 +748,6 @@ device 		hyperv		# HyperV drivers
 # smapi: System Management Application Program Interface driver
 # smbios: DMI/SMBIOS entry point
 # vpd: Vital Product Data kernel interface
-# pmtimer: Adjust system timer at wakeup time
 # pbio: Parallel (8255 PPI) basic I/O (mode 0) port (e.g. Advantech PCL-724)
 # asmc: Apple System Management Controller
 # si: Specialix International SI/XIO or SX intelligent serial card driver
@@ -830,7 +781,6 @@ device		ipmi
 device		smapi
 device		smbios
 device		vpd
-device		pmtimer
 device		pbio
 hint.pbio.0.at="isa"
 hint.pbio.0.port="0x360"
@@ -912,19 +862,6 @@ options 	ENABLE_ALART		# Control alarm on Intel intpm driver
 options 	PMAP_SHPGPERPROC=201
 
 #
-# Change the size of the kernel virtual address space.  Due to
-# constraints in loader(8) on i386, this must be a multiple of 4.
-# 256 = 1 GB of kernel address space.  Increasing this also causes
-# a reduction of the address space in user processes.  512 splits
-# the 4GB cpu address space in half (2GB user, 2GB kernel).  For PAE
-# kernels, the value will need to be double non-PAE.  A value of 1024
-# for PAE kernels is necessary to split the address space in half.
-# This will likely need to be increased to handle memory sizes >4GB.
-# PAE kernels default to a value of 512.
-#
-options 	KVA_PAGES=260
-
-#
 # Number of initial kernel page table pages used for early bootstrap.
 # This number should include enough pages to map the kernel, any
 # modules or other data loaded with the kernel by the loader, and data
@@ -937,20 +874,14 @@ options 	NKPT=31
 #####################################################################
 # ABI Emulation
 
-# Enable iBCS2 runtime support for SCO and ISC binaries
-#options 	IBCS2
-
-# Emulate spx device for client side of SVR3 local X interface
-options 	SPX_HACK
+# Enable (32-bit) a.out binary support
+options 	COMPAT_AOUT
 
 # Enable 32-bit runtime support for CloudABI binaries.
 options 	COMPAT_CLOUDABI32
 
 # Enable Linux ABI emulation
 options 	COMPAT_LINUX
-
-# Enable i386 a.out binary support
-options 	COMPAT_AOUT
 
 # Enable the linux-like proc filesystem support (requires COMPAT_LINUX
 # and PSEUDOFS)
@@ -968,26 +899,10 @@ device		ndis
 #####################################################################
 # VM OPTIONS
 
-# Disable the 4 MByte page PSE CPU feature.  The PSE feature allows the
-# kernel to use 4 MByte pages to map the kernel instead of 4k pages.
-# This saves on the amount of memory needed for page tables needed to
-# map the kernel.  You should only disable this feature as a temporary
-# workaround if you are having problems with it enabled.
-#
-#options 	DISABLE_PSE
-
-# Disable the global pages PGE CPU feature.  The PGE feature allows pages
-# to be marked with the PG_G bit.  TLB entries for these pages are not
-# flushed from the cache when %cr3 is reloaded.  This can make context
-# switches less expensive.  You should only disable this feature as a
-# temporary workaround if you are having problems with it enabled.
-#
-#options 	DISABLE_PG_G
-
 # KSTACK_PAGES is the number of memory pages to assign to the kernel
 # stack of each thread.
 
-options 	KSTACK_PAGES=3
+options 	KSTACK_PAGES=5
 
 # Enable detailed accounting by the PV entry allocator.
 

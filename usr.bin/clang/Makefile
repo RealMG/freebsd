@@ -17,7 +17,6 @@ SUBDIR+=	lli
 SUBDIR+=	llvm-ar
 SUBDIR+=	llvm-as
 SUBDIR+=	llvm-bcanalyzer
-SUBDIR+=	llvm-cov
 SUBDIR+=	llvm-cxxdump
 SUBDIR+=	llvm-cxxfilt
 SUBDIR+=	llvm-diff
@@ -28,10 +27,11 @@ SUBDIR+=	llvm-link
 SUBDIR+=	llvm-lto
 SUBDIR+=	llvm-lto2
 SUBDIR+=	llvm-mc
+SUBDIR+=	llvm-mca
 SUBDIR+=	llvm-modextract
 SUBDIR+=	llvm-nm
+SUBDIR+=	llvm-objcopy
 SUBDIR+=	llvm-pdbutil
-SUBDIR+=	llvm-profdata
 SUBDIR+=	llvm-rtdyld
 SUBDIR+=	llvm-symbolizer
 SUBDIR+=	llvm-xray
@@ -43,7 +43,11 @@ SUBDIR+=	lld
 .endif
 .if ${MK_LLDB} != "no"
 SUBDIR+=	lldb
-.endif # MK_LLDB
+.endif
+.if ${MK_LLVM_COV} != "no"
+SUBDIR+=	llvm-cov
+SUBDIR+=	llvm-profdata
+.endif
 .endif # TOOLS_PREFIX
 
 SUBDIR_PARALLEL=

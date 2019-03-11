@@ -8,7 +8,7 @@
  *
  * 1. Copyright Notice
  *
- * Some or all of this work - Copyright (c) 1999 - 2017, Intel Corp.
+ * Some or all of this work - Copyright (c) 1999 - 2019, Intel Corp.
  * All rights reserved.
  *
  * 2. License
@@ -219,22 +219,19 @@ AcpiLoadTables (
             "While loading namespace from ACPI tables"));
     }
 
-    if (AcpiGbl_ParseTableAsTermList || !AcpiGbl_GroupModuleLevelCode)
+    /*
+     * Initialize the objects in the namespace that remain uninitialized.
+     * This runs the executable AML that may be part of the declaration of
+     * these name objects:
+     *     OperationRegions, BufferFields, Buffers, and Packages.
+     *
+     */
+    Status = AcpiNsInitializeObjects ();
+    if (ACPI_SUCCESS (Status))
     {
-        /*
-         * Initialize the objects that remain uninitialized. This
-         * runs the executable AML that may be part of the
-         * declaration of these objects:
-         * OperationRegions, BufferFields, Buffers, and Packages.
-         */
-        Status = AcpiNsInitializeObjects ();
-        if (ACPI_FAILURE (Status))
-        {
-            return_ACPI_STATUS (Status);
-        }
+        AcpiGbl_NamespaceInitialized = TRUE;
     }
 
-    AcpiGbl_NamespaceInitialized = TRUE;
     return_ACPI_STATUS (Status);
 }
 

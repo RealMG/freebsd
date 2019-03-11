@@ -32,7 +32,7 @@
  * SUCH DAMAGE.
  */
 
-#include "assym.s"
+#include "assym.inc"
 #include "opt_sched.h"
 
 #include <machine/param.h>
@@ -154,31 +154,78 @@ END(fpe_state_save)
 #endif /* FPE */
 
 /*
- * void cpu_throw(struct thread *old, struct thread *new)
+ * void
+ * fpe_state_clear(void)
+ */
+ENTRY(fpe_state_clear)
+	/*
+	 * Enable FPE usage in supervisor mode,
+	 * so we can access registers.
+	 */
+	li	t0, SSTATUS_FS_INITIAL
+	csrs	sstatus, t0
+
+	fscsr	zero
+	fcvt.d.l f0, zero
+	fcvt.d.l f1, zero
+	fcvt.d.l f2, zero
+	fcvt.d.l f3, zero
+	fcvt.d.l f4, zero
+	fcvt.d.l f5, zero
+	fcvt.d.l f6, zero
+	fcvt.d.l f7, zero
+	fcvt.d.l f8, zero
+	fcvt.d.l f9, zero
+	fcvt.d.l f10, zero
+	fcvt.d.l f11, zero
+	fcvt.d.l f12, zero
+	fcvt.d.l f13, zero
+	fcvt.d.l f14, zero
+	fcvt.d.l f15, zero
+	fcvt.d.l f16, zero
+	fcvt.d.l f17, zero
+	fcvt.d.l f18, zero
+	fcvt.d.l f19, zero
+	fcvt.d.l f20, zero
+	fcvt.d.l f21, zero
+	fcvt.d.l f22, zero
+	fcvt.d.l f23, zero
+	fcvt.d.l f24, zero
+	fcvt.d.l f25, zero
+	fcvt.d.l f26, zero
+	fcvt.d.l f27, zero
+	fcvt.d.l f28, zero
+	fcvt.d.l f29, zero
+	fcvt.d.l f30, zero
+	fcvt.d.l f31, zero
+
+	/* Disable FPE usage in supervisor mode. */
+	li	t0, SSTATUS_FS_MASK
+	csrc	sstatus, t0
+
+	ret
+END(fpe_state_clear)
+	
+/*
+ * void cpu_throw(struct thread *old __unused, struct thread *new)
  */
 ENTRY(cpu_throw)
+	/* Activate the new thread's pmap. */
+	mv	s0, a1
+	mv	a0, a1
+	call	_C_LABEL(pmap_activate_sw)
+	mv	a0, s0
+
 	/* Store the new curthread */
-	sd	a1, PC_CURTHREAD(gp)
+	sd	a0, PC_CURTHREAD(gp)
 	/* And the new pcb */
-	ld	x13, TD_PCB(a1)
+	ld	x13, TD_PCB(a0)
 	sd	x13, PC_CURPCB(gp)
-
-	sfence.vma
-
-	/* Switch to the new pmap */
-	ld	t0, PCB_L1ADDR(x13)
-	srli	t0, t0, PAGE_SHIFT
-	li	t1, SATP_MODE_SV39
-	or	t0, t0, t1
-	csrw	sptbr, t0
-
-	/* TODO: Invalidate the TLB */
-
-	sfence.vma
 
 	/* Load registers */
 	ld	ra, (PCB_RA)(x13)
 	ld	sp, (PCB_SP)(x13)
+	ld	tp, (PCB_TP)(x13)
 
 	/* s[0-11] */
 	ld	s0, (PCB_S + 0 * 8)(x13)
@@ -196,7 +243,7 @@ ENTRY(cpu_throw)
 
 #ifdef FPE
 	/* Is FPE enabled for new thread? */
-	ld	t0, TD_FRAME(a1)
+	ld	t0, TD_FRAME(a0)
 	ld	t1, (TF_SSTATUS)(t0)
 	li	t2, SSTATUS_FS_MASK
 	and	t3, t1, t2
@@ -208,8 +255,6 @@ ENTRY(cpu_throw)
 #endif
 
 	ret
-.Lcpu_throw_panic_str:
-	.asciz "cpu_throw: %p\0"
 END(cpu_throw)
 
 /*
@@ -233,6 +278,7 @@ ENTRY(cpu_switch)
 	/* Store ra, sp and the callee-saved registers */
 	sd	ra, (PCB_RA)(x13)
 	sd	sp, (PCB_SP)(x13)
+	sd	tp, (PCB_TP)(x13)
 
 	/* s[0-11] */
 	sd	s0, (PCB_S + 0 * 8)(x13)
@@ -271,40 +317,30 @@ ENTRY(cpu_switch)
 1:
 #endif
 
+	/* Activate the new thread's pmap */
+	mv	s0, a0
+	mv	s1, a1
+	mv	s2, a2
+	mv	a0, a1
+	call	_C_LABEL(pmap_activate_sw)
+	mv	a1, s1
+
+	/* Release the old thread */
+	sd	s2, TD_LOCK(s0)
+#if defined(SCHED_ULE) && defined(SMP)
+	/* Spin if TD_LOCK points to a blocked_lock */
+	la	s2, _C_LABEL(blocked_lock)
+1:
+	ld	t0, TD_LOCK(a1)
+	beq	t0, s2, 1b
+#endif
 	/*
 	 * Restore the saved context.
 	 */
 	ld	x13, TD_PCB(a1)
 
-	/*
-	 * TODO: We may need to flush the cache here if switching
-	 * to a user process.
-	 */
-
-	sfence.vma
-
-	/* Switch to the new pmap */
-	ld	t0, PCB_L1ADDR(x13)
-	srli	t0, t0, PAGE_SHIFT
-	li	t1, SATP_MODE_SV39
-	or	t0, t0, t1
-	csrw	sptbr, t0
-
-	/* TODO: Invalidate the TLB */
-
-	sfence.vma
-
-	/* Release the old thread */
-	sd	a2, TD_LOCK(a0)
-#if defined(SCHED_ULE) && defined(SMP)
-	/* Spin if TD_LOCK points to a blocked_lock */
-	la	a2, _C_LABEL(blocked_lock)
-1:
-	ld	t0, TD_LOCK(a1)
-	beq	t0, a2, 1b
-#endif
-
 	/* Restore the registers */
+	ld	tp, (PCB_TP)(x13)
 	ld	ra, (PCB_RA)(x13)
 	ld	sp, (PCB_SP)(x13)
 
@@ -394,7 +430,6 @@ ENTRY(fork_trampoline)
 	ld	a7, (TF_A + 7 * 8)(sp)
 
 	/* Load user ra and sp */
-	ld	tp, (TF_TP)(sp)
 	ld	ra, (TF_RA)(sp)
 
 	/*
@@ -418,6 +453,7 @@ ENTRY(savectx)
 	/* Store ra, sp and the callee-saved registers */
 	sd	ra, (PCB_RA)(a0)
 	sd	sp, (PCB_SP)(a0)
+	sd	tp, (PCB_TP)(a0)
 
 	/* s[0-11] */
 	sd	s0, (PCB_S + 0 * 8)(a0)

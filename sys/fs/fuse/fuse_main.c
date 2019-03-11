@@ -1,4 +1,6 @@
-/*
+/*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 2007-2009 Google Inc.
  * All rights reserved.
  *
@@ -82,14 +84,14 @@ struct mtx fuse_mtx;
 extern struct vfsops fuse_vfsops;
 extern struct cdevsw fuse_cdevsw;
 extern struct vop_vector fuse_vnops;
-extern int fuse_pbuf_freecnt;
+extern uma_zone_t fuse_pbuf_zone;
 
 static struct vfsconf fuse_vfsconf = {
 	.vfc_version = VFS_VERSION,
 	.vfc_name = "fusefs",
 	.vfc_vfsops = &fuse_vfsops,
 	.vfc_typenum = -1,
-	.vfc_flags = VFCF_SYNTHETIC
+	.vfc_flags = VFCF_JAIL | VFCF_SYNTHETIC
 };
 
 SYSCTL_INT(_vfs_fuse, OID_AUTO, kernelabi_major, CTLFLAG_RD,
@@ -120,7 +122,6 @@ fuse_loader(struct module *m, int what, void *arg)
 
 	switch (what) {
 	case MOD_LOAD:			/* kldload */
-		fuse_pbuf_freecnt = nswbuf / 2 + 1;
 		mtx_init(&fuse_mtx, "fuse_mtx", NULL, MTX_DEF);
 		err = fuse_device_init();
 		if (err) {
@@ -128,6 +129,7 @@ fuse_loader(struct module *m, int what, void *arg)
 			return (err);
 		}
 		fuse_ipc_init();
+		fuse_pbuf_zone = pbuf_zsecond_create("fusepbuf", nswbuf / 2);
 
 		/* vfs_modevent ignores its first arg */
 		if ((err = vfs_modevent(NULL, what, &fuse_vfsconf)))
@@ -142,6 +144,7 @@ fuse_loader(struct module *m, int what, void *arg)
 		if ((err = vfs_modevent(NULL, what, &fuse_vfsconf)))
 			return (err);
 		fuse_bringdown(eh_tag);
+		uma_zdestroy(fuse_pbuf_zone);
 		break;
 	default:
 		return (EINVAL);

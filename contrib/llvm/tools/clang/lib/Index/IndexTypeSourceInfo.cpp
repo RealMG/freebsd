@@ -37,7 +37,7 @@ public:
       Relations.emplace_back((unsigned)SymbolRole::RelationIBTypeOf, Parent);
     }
   }
-  
+
   bool shouldWalkTypesOfTypeLocs() const { return false; }
 
 #define TRY_TO(CALL_EXPR)                                                      \
@@ -100,7 +100,8 @@ public:
 
   bool VisitTagTypeLoc(TagTypeLoc TL) {
     TagDecl *D = TL.getDecl();
-    if (D->getParentFunctionOrMethod())
+    if (!IndexCtx.shouldIndexFunctionLocalSymbols() &&
+        D->getParentFunctionOrMethod())
       return true;
 
     if (TL.isDefinition()) {
@@ -126,19 +127,29 @@ public:
     return true;
   }
 
-  bool VisitTemplateSpecializationTypeLoc(TemplateSpecializationTypeLoc TL) {
-    if (const TemplateSpecializationType *T = TL.getTypePtr()) {
-      if (IndexCtx.shouldIndexImplicitTemplateInsts()) {
-        if (CXXRecordDecl *RD = T->getAsCXXRecordDecl())
+  template<typename TypeLocType>
+  bool HandleTemplateSpecializationTypeLoc(TypeLocType TL) {
+    if (const auto *T = TL.getTypePtr()) {
+      if (IndexCtx.shouldIndexImplicitInstantiation()) {
+        if (CXXRecordDecl *RD = T->getAsCXXRecordDecl()) {
           IndexCtx.handleReference(RD, TL.getTemplateNameLoc(),
                                    Parent, ParentDC, SymbolRoleSet(), Relations);
-      } else {
-        if (const TemplateDecl *D = T->getTemplateName().getAsTemplateDecl())
-          IndexCtx.handleReference(D, TL.getTemplateNameLoc(),
-                                   Parent, ParentDC, SymbolRoleSet(), Relations);
+          return true;
+        }
       }
+      if (const TemplateDecl *D = T->getTemplateName().getAsTemplateDecl())
+        IndexCtx.handleReference(D, TL.getTemplateNameLoc(), Parent, ParentDC,
+                                 SymbolRoleSet(), Relations);
     }
     return true;
+  }
+
+  bool VisitTemplateSpecializationTypeLoc(TemplateSpecializationTypeLoc TL) {
+    return HandleTemplateSpecializationTypeLoc(TL);
+  }
+
+  bool VisitDeducedTemplateSpecializationTypeLoc(DeducedTemplateSpecializationTypeLoc TL) {
+    return HandleTemplateSpecializationTypeLoc(TL);
   }
 
   bool VisitDependentNameTypeLoc(DependentNameTypeLoc TL) {
@@ -184,7 +195,7 @@ void IndexingContext::indexTypeSourceInfo(TypeSourceInfo *TInfo,
                                           bool isIBType) {
   if (!TInfo || TInfo->getTypeLoc().isNull())
     return;
-  
+
   indexTypeLoc(TInfo->getTypeLoc(), Parent, DC, isBase, isIBType);
 }
 

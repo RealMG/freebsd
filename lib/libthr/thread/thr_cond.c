@@ -1,4 +1,6 @@
-/*
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2005 David Xu <davidxu@freebsd.org>
  * Copyright (c) 2015 The FreeBSD Foundation
  * All rights reserved.
@@ -147,7 +149,8 @@ init_static(struct pthread *thread, pthread_cond_t *cond)
 	}
 
 int
-_pthread_cond_init(pthread_cond_t *cond, const pthread_condattr_t *cond_attr)
+_pthread_cond_init(pthread_cond_t * __restrict cond,
+    const pthread_condattr_t * __restrict cond_attr)
 {
 
 	*cond = NULL;
@@ -163,17 +166,26 @@ _pthread_cond_destroy(pthread_cond_t *cond)
 	error = 0;
 	if (*cond == THR_PSHARED_PTR) {
 		cvp = __thr_pshared_offpage(cond, 0);
-		if (cvp != NULL)
-			__thr_pshared_destroy(cond);
-		*cond = THR_COND_DESTROYED;
+		if (cvp != NULL) {
+			if (cvp->kcond.c_has_waiters)
+				error = EBUSY;
+			else
+				__thr_pshared_destroy(cond);
+		}
+		if (error == 0)
+			*cond = THR_COND_DESTROYED;
 	} else if ((cvp = *cond) == THR_COND_INITIALIZER) {
 		/* nothing */
 	} else if (cvp == THR_COND_DESTROYED) {
 		error = EINVAL;
 	} else {
 		cvp = *cond;
-		*cond = THR_COND_DESTROYED;
-		free(cvp);
+		if (cvp->__has_user_waiters || cvp->kcond.c_has_waiters)
+			error = EBUSY;
+		else {
+			*cond = THR_COND_DESTROYED;
+			free(cvp);
+		}
 	}
 	return (error);
 }
@@ -372,15 +384,17 @@ _pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex)
 }
 
 int
-__pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex)
+__pthread_cond_wait(pthread_cond_t * __restrict cond,
+    pthread_mutex_t * __restrict mutex)
 {
 
 	return (cond_wait_common(cond, mutex, NULL, 1));
 }
 
 int
-_pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex,
-		       const struct timespec * abstime)
+_pthread_cond_timedwait(pthread_cond_t * __restrict cond,
+    pthread_mutex_t * __restrict mutex,
+    const struct timespec * __restrict abstime)
 {
 
 	if (abstime == NULL || abstime->tv_sec < 0 || abstime->tv_nsec < 0 ||

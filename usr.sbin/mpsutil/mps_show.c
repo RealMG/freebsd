@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2015 Netflix, Inc.
- * All rights reserved.
  * Written by: Scott Long <scottl@freebsd.org>
  *
  * Copyright (c) 2008 Yahoo!, Inc.
@@ -202,6 +201,7 @@ static int
 show_iocfacts(int ac, char **av)
 {
 	MPI2_IOC_FACTS_REPLY *facts;
+	char tmpbuf[128];
 	int error, fd;
 
 	fd = mps_open(mps_unit);
@@ -216,6 +216,14 @@ show_iocfacts(int ac, char **av)
 		close(fd);
 		return (errno);
 	}
+
+#define IOCCAP "\3ScsiTaskFull" "\4DiagTrace" "\5SnapBuf" "\6ExtBuf" \
+    "\7EEDP" "\10BiDirTarg" "\11Multicast" "\14TransRetry" "\15IR" \
+    "\16EventReplay" "\17RaidAccel" "\20MSIXIndex" "\21HostDisc" \
+    "\22FastPath" "\23RDPQArray" "\24AtomicReqDesc" "\25PCIeSRIOV"
+
+	bzero(tmpbuf, sizeof(tmpbuf));
+	mps_parse_flags(facts->IOCCapabilities, IOCCAP, tmpbuf, sizeof(tmpbuf));
 
 	printf("          MsgVersion: %02d.%02d\n",
 	    facts->MsgVersion >> 8, facts->MsgVersion & 0xff);
@@ -236,14 +244,19 @@ show_iocfacts(int ac, char **av)
 	printf("      MaxMSIxVectors: %d\n", facts->MaxMSIxVectors);
 	printf("       RequestCredit: %d\n", facts->RequestCredit);
 	printf("           ProductID: 0x%x\n", facts->ProductID);
-	printf("     IOCCapabilities: 0x%x\n", facts->IOCCapabilities);
+	printf("     IOCCapabilities: 0x%x %s\n", facts->IOCCapabilities,
+	    tmpbuf);
 	printf("           FWVersion: 0x%08x\n", facts->FWVersion.Word);
 	printf(" IOCRequestFrameSize: %d\n", facts->IOCRequestFrameSize);
 	printf("       MaxInitiators: %d\n", facts->MaxInitiators);
 	printf("          MaxTargets: %d\n", facts->MaxTargets);
 	printf("     MaxSasExpanders: %d\n", facts->MaxSasExpanders);
 	printf("       MaxEnclosures: %d\n", facts->MaxEnclosures);
-	printf("       ProtocolFlags: 0x%x\n", facts->ProtocolFlags);
+
+	bzero(tmpbuf, sizeof(tmpbuf));
+	mps_parse_flags(facts->ProtocolFlags,
+	    "\4NvmeDevices\2ScsiTarget\1ScsiInitiator", tmpbuf, sizeof(tmpbuf));
+	printf("       ProtocolFlags: 0x%x %s\n", facts->ProtocolFlags, tmpbuf);
 	printf("  HighPriorityCredit: %d\n", facts->HighPriorityCredit);
 	printf("MaxRepDescPostQDepth: %d\n",
 	    facts->MaxReplyDescriptorPostQueueDepth);

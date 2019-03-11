@@ -101,8 +101,38 @@ AArch64MCAsmInfoELF::AArch64MCAsmInfoELF(const Triple &T) {
   HasIdentDirective = true;
 }
 
-AArch64MCAsmInfoCOFF::AArch64MCAsmInfoCOFF() {
-  CommentString = ";";
+AArch64MCAsmInfoMicrosoftCOFF::AArch64MCAsmInfoMicrosoftCOFF() {
   PrivateGlobalPrefix = ".L";
   PrivateLabelPrefix = ".L";
+
+  Data16bitsDirective = "\t.hword\t";
+  Data32bitsDirective = "\t.word\t";
+  Data64bitsDirective = "\t.xword\t";
+
+  AlignmentIsInBytes = false;
+  SupportsDebugInformation = true;
+  CodePointerSize = 8;
+
+  CommentString = ";";
+  ExceptionsType = ExceptionHandling::WinEH;
+  WinEHEncodingType = WinEH::EncodingType::Itanium;
+}
+
+AArch64MCAsmInfoGNUCOFF::AArch64MCAsmInfoGNUCOFF() {
+  PrivateGlobalPrefix = ".L";
+  PrivateLabelPrefix = ".L";
+
+  Data16bitsDirective = "\t.hword\t";
+  Data32bitsDirective = "\t.word\t";
+  Data64bitsDirective = "\t.xword\t";
+
+  AlignmentIsInBytes = false;
+  SupportsDebugInformation = true;
+  CodePointerSize = 8;
+
+  CommentString = "//";
+  ExceptionsType = ExceptionHandling::DwarfCFI;
+  // The default is dwarf, but WinEH can be enabled optionally, which requires
+  // WinEHEncodingType to be set.
+  WinEHEncodingType = WinEH::EncodingType::Itanium;
 }

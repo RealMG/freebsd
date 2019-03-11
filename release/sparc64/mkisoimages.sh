@@ -22,6 +22,8 @@
 # resulting ISO image, base-bits-dir contains the image contents and
 # extra-bits-dir, if provided, contains additional files to be merged
 # into base-bits-dir as part of making the image.
+set -e
+
 if [ $# -lt 3 ]; then
 	echo "Usage: $0 [-b] image-label image-name base-bits-dir [extra-bits-dir]" > /dev/stderr
 	exit 1
@@ -35,7 +37,7 @@ NAME="$1"; shift
 BASEBITSDIR="$1"
 
 # Create an ISO image
-publisher="The FreeBSD Project.  http://www.FreeBSD.org/"
+publisher="The FreeBSD Project.  https://www.FreeBSD.org/"
 echo "/dev/iso9660/$LABEL / cd9660 ro 0 0" > "$BASEBITSDIR/etc/fstab"
 makefs -t cd9660 -o rockridge -o label="$LABEL" -o publisher="$publisher" "$NAME.tmp" "$@"
 rm -f "$BASEBITSDIR/etc/fstab"

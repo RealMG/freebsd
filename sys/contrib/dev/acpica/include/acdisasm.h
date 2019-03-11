@@ -8,7 +8,7 @@
  *
  * 1. Copyright Notice
  *
- * Some or all of this work - Copyright (c) 1999 - 2017, Intel Corp.
+ * Some or all of this work - Copyright (c) 1999 - 2019, Intel Corp.
  * All rights reserved.
  *
  * 2. License
@@ -272,8 +272,10 @@ typedef enum
     ACPI_DMT_PMTT,
     ACPI_DMT_PPTT,
     ACPI_DMT_SDEI,
+    ACPI_DMT_SDEV,
     ACPI_DMT_SLIC,
     ACPI_DMT_SRAT,
+    ACPI_DMT_TPM2,
 
     /* Special opcodes */
 
@@ -407,6 +409,7 @@ extern ACPI_DMTABLE_INFO        AcpiDmTableInfoFpdt1[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoGas[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoGtdt[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoGtdtHdr[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoGtdtEl2[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoGtdt0[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoGtdt0a[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoGtdt1[];
@@ -447,6 +450,7 @@ extern ACPI_DMTABLE_INFO        AcpiDmTableInfoIort3a[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoIort3b[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoIort3c[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoIort4[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoIort5[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoIortAcc[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoIortHdr[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoIortMap[];
@@ -502,6 +506,8 @@ extern ACPI_DMTABLE_INFO        AcpiDmTableInfoNfit4[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoNfit5[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoNfit6[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoNfit6a[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoNfit7[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoPdtt[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoPmtt[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoPmtt0[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoPmtt1[];
@@ -515,6 +521,7 @@ extern ACPI_DMTABLE_INFO        AcpiDmTableInfoPcct1[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoPcct2[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoPcct3[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoPcct4[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoPdtt0[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoPptt0[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoPptt0a[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoPptt1[];
@@ -529,6 +536,13 @@ extern ACPI_DMTABLE_INFO        AcpiDmTableInfoS3pt0[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoS3pt1[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSbst[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSdei[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSdev[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSdevHdr[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSdev0[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSdev0a[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSdev1[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSdev1a[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSdev1b[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSlic[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSlit[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSpcr[];
@@ -540,12 +554,17 @@ extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSrat1[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSrat2[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSrat3[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSrat4[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoSrat5[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoStao[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoStaoStr[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoTcpaHdr[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoTcpaClient[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoTcpaServer[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoTpm2[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoTpm2a[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoTpm211[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoTpm23[];
+extern ACPI_DMTABLE_INFO        AcpiDmTableInfoTpm23a[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoUefi[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoVrtc[];
 extern ACPI_DMTABLE_INFO        AcpiDmTableInfoVrtc0[];
@@ -565,7 +584,7 @@ extern ACPI_DMTABLE_INFO        AcpiDmTableInfoGeneric[][2];
  * dmtable and ahtable
  */
 extern const ACPI_DMTABLE_DATA  AcpiDmTableData[];
-extern const AH_TABLE           Gbl_AcpiSupportedTables[];
+extern const AH_TABLE           AcpiGbl_SupportedTables[];
 
 UINT8
 AcpiDmGenerateChecksum (
@@ -586,7 +605,7 @@ AcpiDmDumpTable (
     UINT32                  TableLength,
     UINT32                  TableOffset,
     void                    *Table,
-    UINT32                  SubTableLength,
+    UINT32                  SubtableLength,
     ACPI_DMTABLE_INFO        *Info);
 
 void
@@ -713,6 +732,10 @@ AcpiDmDumpPcct (
     ACPI_TABLE_HEADER       *Table);
 
 void
+AcpiDmDumpPdtt (
+    ACPI_TABLE_HEADER       *Table);
+
+void
 AcpiDmDumpPmtt (
     ACPI_TABLE_HEADER       *Table);
 
@@ -733,6 +756,10 @@ AcpiDmDumpS3pt (
     ACPI_TABLE_HEADER       *Table);
 
 void
+AcpiDmDumpSdev (
+    ACPI_TABLE_HEADER       *Table);
+
+void
 AcpiDmDumpSlic (
     ACPI_TABLE_HEADER       *Table);
 
@@ -750,6 +777,10 @@ AcpiDmDumpStao (
 
 void
 AcpiDmDumpTcpa (
+    ACPI_TABLE_HEADER       *Table);
+
+void
+AcpiDmDumpTpm2 (
     ACPI_TABLE_HEADER       *Table);
 
 void

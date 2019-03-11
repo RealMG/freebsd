@@ -25,7 +25,9 @@
  * SUCH DAMAGE.
  */
 
-/*
+/*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1995-1998 John Birrell <jb@cimlogic.com.au>
  * All rights reserved.
  *
@@ -168,6 +170,7 @@ __thr_fork(void)
 	 */
 	if (_thr_isthreaded() != 0) {
 		was_threaded = 1;
+		__thr_malloc_prefork(curthread);
 		_malloc_prefork();
 		__thr_pshared_atfork_pre();
 		_rtld_atfork_pre(rtld_locks);
@@ -195,6 +198,10 @@ __thr_fork(void)
 		 */
 		curthread->tlflags &= ~TLFLAGS_IN_TDLIST;
 
+		/* before thr_self() */
+		if (was_threaded)
+			__thr_malloc_postfork(curthread);
+
 		/* child is a new kernel thread. */
 		thr_self(&curthread->tid);
 
@@ -217,9 +224,9 @@ __thr_fork(void)
 		_thr_rwl_rdlock(&_thr_atfork_lock);
 
 		if (was_threaded) {
-			__isthreaded = 1;
+			_thr_setthreaded(1);
 			_malloc_postfork();
-			__isthreaded = 0;
+			_thr_setthreaded(0);
 		}
 
 		/* Ready to continue, unblock signals. */ 
@@ -239,6 +246,7 @@ __thr_fork(void)
 		_thr_signal_postfork();
 
 		if (was_threaded) {
+			__thr_malloc_postfork(curthread);
 			_rtld_atfork_post(rtld_locks);
 			__thr_pshared_atfork_post();
 			_malloc_postfork();

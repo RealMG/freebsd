@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2009-2013 The FreeBSD Foundation
  * Copyright (c) 2013-2015 Mariusz Zaborski <oshogbo@FreeBSD.org>
  * All rights reserved.
@@ -243,6 +245,15 @@ nvlist_set_array_next(nvlist_t *nvl, nvpair_t *ele)
 	}
 
 	nvl->nvl_array_next = ele;
+}
+
+nvpair_t *
+nvlist_get_array_next_nvpair(nvlist_t *nvl)
+{
+
+	NVLIST_ASSERT(nvl);
+
+	return (nvl->nvl_array_next);
 }
 
 bool
@@ -707,15 +718,17 @@ out:
 static int *
 nvlist_xdescriptors(const nvlist_t *nvl, int *descs)
 {
+	void *cookie;
 	nvpair_t *nvp;
 	int type;
 
 	NVLIST_ASSERT(nvl);
 	PJDLOG_ASSERT(nvl->nvl_error == 0);
 
-	nvp = NULL;
+	cookie = NULL;
 	do {
-		while (nvlist_next(nvl, &type, (void *)&nvp) != NULL) {
+		while (nvlist_next(nvl, &type, &cookie) != NULL) {
+			nvp = cookie;
 			switch (type) {
 			case NV_TYPE_DESCRIPTOR:
 				*descs = nvpair_get_descriptor(nvp);
@@ -737,7 +750,7 @@ nvlist_xdescriptors(const nvlist_t *nvl, int *descs)
 			    }
 			case NV_TYPE_NVLIST:
 				nvl = nvpair_get_nvlist(nvp);
-				nvp = NULL;
+				cookie = NULL;
 				break;
 			case NV_TYPE_NVLIST_ARRAY:
 			    {
@@ -749,12 +762,12 @@ nvlist_xdescriptors(const nvlist_t *nvl, int *descs)
 				PJDLOG_ASSERT(nitems > 0);
 
 				nvl = value[0];
-				nvp = NULL;
+				cookie = NULL;
 				break;
 			    }
 			}
 		}
-	} while ((nvl = nvlist_get_pararr(nvl, (void *)&nvp)) != NULL);
+	} while ((nvl = nvlist_get_pararr(nvl, &cookie)) != NULL);
 
 	return (descs);
 }
@@ -784,6 +797,7 @@ size_t
 nvlist_ndescriptors(const nvlist_t *nvl)
 {
 #ifndef _KERNEL
+	void *cookie;
 	nvpair_t *nvp;
 	size_t ndescs;
 	int type;
@@ -792,16 +806,17 @@ nvlist_ndescriptors(const nvlist_t *nvl)
 	PJDLOG_ASSERT(nvl->nvl_error == 0);
 
 	ndescs = 0;
-	nvp = NULL;
+	cookie = NULL;
 	do {
-		while (nvlist_next(nvl, &type, (void *)&nvp) != NULL) {
+		while (nvlist_next(nvl, &type, &cookie) != NULL) {
+			nvp = cookie;
 			switch (type) {
 			case NV_TYPE_DESCRIPTOR:
 				ndescs++;
 				break;
 			case NV_TYPE_NVLIST:
 				nvl = nvpair_get_nvlist(nvp);
-				nvp = NULL;
+				cookie = NULL;
 				break;
 			case NV_TYPE_NVLIST_ARRAY:
 			    {
@@ -813,7 +828,7 @@ nvlist_ndescriptors(const nvlist_t *nvl)
 				PJDLOG_ASSERT(nitems > 0);
 
 				nvl = value[0];
-				nvp = NULL;
+				cookie = NULL;
 				break;
 			    }
 			case NV_TYPE_DESCRIPTOR_ARRAY:
@@ -827,7 +842,7 @@ nvlist_ndescriptors(const nvlist_t *nvl)
 			    }
 			}
 		}
-	} while ((nvl = nvlist_get_pararr(nvl, (void *)&nvp)) != NULL);
+	} while ((nvl = nvlist_get_pararr(nvl, &cookie)) != NULL);
 
 	return (ndescs);
 #else
@@ -1600,6 +1615,37 @@ NVLIST_ADD_ARRAY(const int *, descriptor)
 #endif
 
 #undef	NVLIST_ADD_ARRAY
+
+#define	NVLIST_APPEND_ARRAY(vtype, type, TYPE)				\
+void									\
+nvlist_append_##type##_array(nvlist_t *nvl, const char *name, vtype value)\
+{									\
+	nvpair_t *nvp;							\
+									\
+	if (nvlist_error(nvl) != 0) {					\
+		ERRNO_SET(nvlist_error(nvl));				\
+		return;							\
+	}								\
+	nvp = nvlist_find(nvl, NV_TYPE_##TYPE##_ARRAY, name);		\
+	if (nvp == NULL) {						\
+		nvlist_add_##type##_array(nvl, name, &value, 1);	\
+		return;							\
+	}								\
+	if (nvpair_append_##type##_array(nvp, value) == -1) {		\
+		nvl->nvl_error = ERRNO_OR_DEFAULT(ENOMEM);		\
+		ERRNO_SET(nvl->nvl_error);				\
+	}								\
+}
+
+NVLIST_APPEND_ARRAY(const bool, bool, BOOL)
+NVLIST_APPEND_ARRAY(const uint64_t, number, NUMBER)
+NVLIST_APPEND_ARRAY(const char *, string, STRING)
+NVLIST_APPEND_ARRAY(const nvlist_t *, nvlist, NVLIST)
+#ifndef _KERNEL
+NVLIST_APPEND_ARRAY(const int, descriptor, DESCRIPTOR)
+#endif
+
+#undef	NVLIST_APPEND_ARRAY
 
 bool
 nvlist_move_nvpair(nvlist_t *nvl, nvpair_t *nvp)

@@ -1,7 +1,9 @@
 /*	$FreeBSD$	*/
 /*	$KAME: rtadvd.c,v 1.82 2003/08/05 12:34:23 itojun Exp $	*/
 
-/*
+/*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
  * Copyright (C) 2011 Hiroki Sato <hrs@FreeBSD.org>
  * All rights reserved.
@@ -1158,6 +1160,19 @@ ra_input(int len, struct nd_router_advert *nra,
 			sizeof(ntopbuf)), on_off[rai->rai_otherflg]);
 		inconsistent++;
 	}
+#ifdef DRAFT_IETF_6MAN_IPV6ONLY_FLAG
+	/* S "IPv6-Only" (Six, Silence-IPv4) flag */
+	if ((nra->nd_ra_flags_reserved & ND_RA_FLAG_IPV6_ONLY) !=
+	    rai->rai_ipv6onlyflg) {
+		syslog(LOG_NOTICE,
+		    "S flag inconsistent on %s:"
+		    " %s from %s, %s from us",
+		    ifi->ifi_ifname, on_off[!rai->rai_ipv6onlyflg],
+		    inet_ntop(AF_INET6, &from->sin6_addr, ntopbuf,
+			sizeof(ntopbuf)), on_off[rai->rai_ipv6onlyflg]);
+		inconsistent++;
+	}
+#endif
 	/* Reachable Time */
 	reachabletime = ntohl(nra->nd_ra_reachable);
 	if (reachabletime && rai->rai_reachabletime &&

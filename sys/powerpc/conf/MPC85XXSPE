@@ -6,16 +6,17 @@
 
 cpu		BOOKE
 cpu		BOOKE_E500
-ident		MPC85XX
+ident		MPC85XXSPE
 
 machine		powerpc	powerpcspe
 
 include 	"dpaa/config.dpaa"
-makeoptions	DEBUG="-Wa,-me500 -g"
+makeoptions	DEBUG=-g		#Build kernel with gdb(1) debug symbols
+makeoptions	WITH_CTF=1
 makeoptions	WERROR="-Werror -Wno-format -Wno-redundant-decls"
-makeoptions	NO_MODULES=yes
 
 options 	FPU_EMU
+options 	MAXCPU=2
 
 options 	_KPOSIX_PRIORITY_SCHEDULING
 options 	ALT_BREAK_TO_DEBUGGER
@@ -47,6 +48,7 @@ options 	MSDOSFS
 options 	NFS_ROOT
 options 	NFSCL
 options 	NFSLOCKD
+options 	PRINTF_BUFR_SIZE=128	# Prevent printf output being interspersed.
 options 	PROCFS
 options 	PSEUDOFS
 options 	SCHED_ULE
@@ -67,10 +69,13 @@ options 	DDB_CTF			# Kernel ELF linker loads CTF data
 device		ata
 device		bpf
 device		cfi
+device  	cpufreq
 device		crypto
 device		cryptodev
 device		da
+device  	ds1307
 device		ds1553
+device		iflib
 device		em
 device		alc
 device		ether
@@ -103,6 +108,8 @@ device		uart
 options 	USB_DEBUG	# enable debug msgs
 #device		uhci
 device		ehci
+device  	ukbd
+device  	ums
 device		umass
 device		usb
 device		vlan

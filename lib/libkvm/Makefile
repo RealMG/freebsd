@@ -6,7 +6,7 @@ LIB=	kvm
 
 SHLIBDIR?= /lib
 SHLIB_MAJOR=	7
-CFLAGS+=-DLIBC_SCCS -I${.CURDIR}
+CFLAGS+=-DNO__SCCSID -I${.CURDIR}
 
 WARNS?=	6
 
@@ -18,6 +18,7 @@ SRCS=	kvm.c kvm_cptime.c kvm_getloadavg.c \
 	kvm_i386.c kvm_minidump_i386.c \
 	kvm_minidump_mips.c \
 	kvm_powerpc.c kvm_powerpc64.c \
+	kvm_minidump_riscv.c \
 	kvm_sparc64.c
 INCS=	kvm.h
 

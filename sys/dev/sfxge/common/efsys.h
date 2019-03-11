@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2010-2016 Solarflare Communications Inc.
  * All rights reserved.
  *
@@ -73,11 +75,6 @@ extern "C" {
 /* Common code requires this */
 #if __FreeBSD_version < 800068
 #define	memmove(d, s, l) bcopy(s, d, l)
-#endif
-
-/* FreeBSD equivalents of Solaris things */
-#ifndef _NOTE
-#define	_NOTE(s)
 #endif
 
 #ifndef B_FALSE
@@ -197,40 +194,6 @@ sfxge_map_mbuf_fast(bus_dma_tag_t tag, bus_dmamap_t map,
 #endif
 }
 
-/* Modifiers used for Windows builds */
-#define	__in
-#define	__in_opt
-#define	__in_ecount(_n)
-#define	__in_ecount_opt(_n)
-#define	__in_bcount(_n)
-#define	__in_bcount_opt(_n)
-
-#define	__out
-#define	__out_opt
-#define	__out_ecount(_n)
-#define	__out_ecount_opt(_n)
-#define	__out_bcount(_n)
-#define	__out_bcount_opt(_n)
-#define	__out_bcount_part(_n, _l)
-#define	__out_bcount_part_opt(_n, _l)
-
-#define	__deref_out
-
-#define	__inout
-#define	__inout_opt
-#define	__inout_ecount(_n)
-#define	__inout_ecount_opt(_n)
-#define	__inout_bcount(_n)
-#define	__inout_bcount_opt(_n)
-#define	__inout_bcount_full_opt(_n)
-
-#define	__deref_out_bcount_opt(n)
-
-#define	__checkReturn
-#define	__success(_x)
-
-#define	__drv_when(_p, _c)
-
 /* Code inclusion options */
 
 
@@ -239,6 +202,7 @@ sfxge_map_mbuf_fast(bus_dma_tag_t tag, bus_dmamap_t map,
 #define	EFSYS_OPT_SIENA 1
 #define	EFSYS_OPT_HUNTINGTON 1
 #define	EFSYS_OPT_MEDFORD 1
+#define	EFSYS_OPT_MEDFORD2 1
 #ifdef DEBUG
 #define	EFSYS_OPT_CHECK_REG 1
 #else
@@ -264,6 +228,7 @@ sfxge_map_mbuf_fast(bus_dma_tag_t tag, bus_dmamap_t map,
 #define	EFSYS_OPT_VPD 1
 #define	EFSYS_OPT_NVRAM 1
 #define	EFSYS_OPT_BOOTCFG 0
+#define	EFSYS_OPT_IMAGE_LAYOUT 0
 
 #define	EFSYS_OPT_DIAG 0
 #define	EFSYS_OPT_RX_SCALE 1
@@ -278,6 +243,14 @@ sfxge_map_mbuf_fast(bus_dma_tag_t tag, bus_dmamap_t map,
 #define	EFSYS_OPT_LICENSING 0
 
 #define	EFSYS_OPT_ALLOW_UNCONFIGURED_NIC 0
+
+#define	EFSYS_OPT_RX_PACKED_STREAM 0
+
+#define	EFSYS_OPT_RX_ES_SUPER_BUFFER 0
+
+#define	EFSYS_OPT_TUNNEL 0
+
+#define	EFSYS_OPT_FW_SUBVARIANT_AWARE 0
 
 /* ID */
 
@@ -385,7 +358,17 @@ typedef struct efsys_mem_s {
 	bus_dmamap_t		esm_map;
 	caddr_t			esm_base;
 	efsys_dma_addr_t	esm_addr;
+	size_t			esm_size;
 } efsys_mem_t;
+
+#define	EFSYS_MEM_SIZE(_esmp)						\
+	((_esmp)->esm_size)
+
+#define	EFSYS_MEM_ADDR(_esmp)						\
+	((_esmp)->esm_addr)
+
+#define	EFSYS_MEM_IS_NULL(_esmp)					\
+	((_esmp)->esm_base == NULL)
 
 
 #define	EFSYS_MEM_ZERO(_esmp, _size)					\
@@ -609,12 +592,6 @@ typedef struct efsys_mem_s {
 	_NOTE(CONSTANTCONDITION)					\
 	} while (B_FALSE)
 #endif
-
-#define	EFSYS_MEM_ADDR(_esmp)						\
-	((_esmp)->esm_addr)
-
-#define	EFSYS_MEM_IS_NULL(_esmp)					\
-	((_esmp)->esm_base == NULL)
 
 /* BAR */
 

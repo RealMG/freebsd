@@ -17,10 +17,11 @@
 #if SANITIZER_POSIX
 
 #include "sanitizer_common.h"
+#include "sanitizer_file.h"
+#include "sanitizer_flags.h"
 #include "sanitizer_libc.h"
 #include "sanitizer_posix.h"
 #include "sanitizer_procmaps.h"
-#include "sanitizer_stacktrace.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -152,17 +153,23 @@ bool MprotectReadOnly(uptr addr, uptr size) {
   return 0 == internal_mprotect((void *)addr, size, PROT_READ);
 }
 
+#if !SANITIZER_MAC
+void MprotectMallocZones(void *addr, int prot) {}
+#endif
+
 fd_t OpenFile(const char *filename, FileAccessMode mode, error_t *errno_p) {
+  if (ShouldMockFailureToOpen(filename))
+    return kInvalidFd;
   int flags;
   switch (mode) {
     case RdOnly: flags = O_RDONLY; break;
-    case WrOnly: flags = O_WRONLY | O_CREAT; break;
+    case WrOnly: flags = O_WRONLY | O_CREAT | O_TRUNC; break;
     case RdWr: flags = O_RDWR | O_CREAT; break;
   }
   fd_t res = internal_open(filename, flags, 0660);
   if (internal_iserror(res, errno_p))
     return kInvalidFd;
-  return res;
+  return ReserveStandardFds(res);
 }
 
 void CloseFile(fd_t fd) {
@@ -187,11 +194,6 @@ bool WriteToFile(fd_t fd, const void *buff, uptr buff_size, uptr *bytes_written,
   if (bytes_written)
     *bytes_written = res;
   return true;
-}
-
-bool RenameFile(const char *oldpath, const char *newpath, error_t *error_p) {
-  uptr res = internal_rename(oldpath, newpath);
-  return !internal_iserror(res, error_p);
 }
 
 void *MapFileToMemory(const char *file_name, uptr *buff_size) {
@@ -231,6 +233,8 @@ static inline bool IntervalsAreSeparate(uptr start1, uptr end1,
 // memory).
 bool MemoryRangeIsAvailable(uptr range_start, uptr range_end) {
   MemoryMappingLayout proc_maps(/*cache_enabled*/true);
+  if (proc_maps.Error())
+    return true; // and hope for the best
   MemoryMappedSegment segment;
   while (proc_maps.Next(&segment)) {
     if (segment.start == segment.end) continue;  // Empty range.
@@ -270,13 +274,8 @@ bool IsAbsolutePath(const char *path) {
 
 void ReportFile::Write(const char *buffer, uptr length) {
   SpinMutexLock l(mu);
-  static const char *kWriteError =
-      "ReportFile::Write() can't output requested buffer!\n";
   ReopenIfNecessary();
-  if (length != internal_write(fd, buffer, length)) {
-    internal_write(fd, kWriteError, internal_strlen(kWriteError));
-    Die();
-  }
+  internal_write(fd, buffer, length);
 }
 
 bool GetCodeRangeForFile(const char *module, uptr *start, uptr *end) {
@@ -294,18 +293,22 @@ bool GetCodeRangeForFile(const char *module, uptr *start, uptr *end) {
   return false;
 }
 
-SignalContext SignalContext::Create(void *siginfo, void *context) {
-  auto si = (siginfo_t *)siginfo;
-  uptr addr = (uptr)si->si_addr;
-  uptr pc, sp, bp;
-  GetPcSpBp(context, &pc, &sp, &bp);
-  WriteFlag write_flag = GetWriteFlag(context);
-  bool is_memory_access = si->si_signo == SIGSEGV;
-  return SignalContext(context, addr, pc, sp, bp, is_memory_access, write_flag);
+uptr SignalContext::GetAddress() const {
+  auto si = static_cast<const siginfo_t *>(siginfo);
+  return (uptr)si->si_addr;
 }
 
-const char *DescribeSignalOrException(int signo) {
-  switch (signo) {
+bool SignalContext::IsMemoryAccess() const {
+  auto si = static_cast<const siginfo_t *>(siginfo);
+  return si->si_signo == SIGSEGV;
+}
+
+int SignalContext::GetType() const {
+  return static_cast<const siginfo_t *>(siginfo)->si_signo;
+}
+
+const char *SignalContext::Describe() const {
+  switch (GetType()) {
     case SIGFPE:
       return "FPE";
     case SIGILL:
@@ -318,6 +321,27 @@ const char *DescribeSignalOrException(int signo) {
       return "BUS";
   }
   return "UNKNOWN SIGNAL";
+}
+
+fd_t ReserveStandardFds(fd_t fd) {
+  CHECK_GE(fd, 0);
+  if (fd > 2)
+    return fd;
+  bool used[3];
+  internal_memset(used, 0, sizeof(used));
+  while (fd <= 2) {
+    used[fd] = true;
+    fd = internal_dup(fd);
+  }
+  for (int i = 0; i <= 2; ++i)
+    if (used[i])
+      internal_close(i);
+  return fd;
+}
+
+bool ShouldMockFailureToOpen(const char *path) {
+  return common_flags()->test_only_emulate_no_memorymap &&
+         internal_strncmp(path, "/proc/", 6) == 0;
 }
 
 } // namespace __sanitizer

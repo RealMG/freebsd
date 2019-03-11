@@ -18,14 +18,14 @@
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
-#include "llvm/Support/CodeGenCWrappers.h"
+#include "llvm/MC/SubtargetFeature.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/CodeGenCWrappers.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/Target/TargetSubtargetInfo.h"
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
@@ -115,11 +115,21 @@ LLVMTargetMachineRef LLVMCreateTargetMachine(LLVMTargetRef T,
     case LLVMRelocDynamicNoPic:
       RM = Reloc::DynamicNoPIC;
       break;
+    case LLVMRelocROPI:
+      RM = Reloc::ROPI;
+      break;
+    case LLVMRelocRWPI:
+      RM = Reloc::RWPI;
+      break;
+    case LLVMRelocROPI_RWPI:
+      RM = Reloc::ROPI_RWPI;
+      break;
     default:
       break;
   }
 
-  CodeModel::Model CM = unwrap(CodeModel);
+  bool JIT;
+  Optional<CodeModel::Model> CM = unwrap(CodeModel, JIT);
 
   CodeGenOpt::Level OL;
   switch (Level) {
@@ -138,8 +148,8 @@ LLVMTargetMachineRef LLVMCreateTargetMachine(LLVMTargetRef T,
   }
 
   TargetOptions opt;
-  return wrap(unwrap(T)->createTargetMachine(Triple, CPU, Features, opt, RM,
-                                             CM, OL));
+  return wrap(unwrap(T)->createTargetMachine(Triple, CPU, Features, opt, RM, CM,
+                                             OL, JIT));
 }
 
 void LLVMDisposeTargetMachine(LLVMTargetMachineRef T) { delete unwrap(T); }
@@ -195,7 +205,7 @@ static LLVMBool LLVMTargetMachineEmit(LLVMTargetMachineRef T, LLVMModuleRef M,
       ft = TargetMachine::CGFT_ObjectFile;
       break;
   }
-  if (TM->addPassesToEmitFile(pass, OS, ft)) {
+  if (TM->addPassesToEmitFile(pass, OS, nullptr, ft)) {
     error = "TargetMachine can't emit a file of this type";
     *ErrorMessage = strdup(error.c_str());
     return true;
@@ -235,6 +245,25 @@ LLVMBool LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef T,
 
 char *LLVMGetDefaultTargetTriple(void) {
   return strdup(sys::getDefaultTargetTriple().c_str());
+}
+
+char *LLVMNormalizeTargetTriple(const char* triple) {
+  return strdup(Triple::normalize(StringRef(triple)).c_str());
+}
+
+char *LLVMGetHostCPUName(void) {
+  return strdup(sys::getHostCPUName().data());
+}
+
+char *LLVMGetHostCPUFeatures(void) {
+  SubtargetFeatures Features;
+  StringMap<bool> HostFeatures;
+
+  if (sys::getHostCPUFeatures(HostFeatures))
+    for (auto &F : HostFeatures)
+      Features.AddFeature(F.first(), F.second);
+
+  return strdup(Features.getString().c_str());
 }
 
 void LLVMAddAnalysisPasses(LLVMTargetMachineRef T, LLVMPassManagerRef PM) {

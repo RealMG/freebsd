@@ -63,10 +63,10 @@ struct glyph {
 TAILQ_HEAD(glyph_list, glyph);
 static SLIST_HEAD(, glyph) glyph_hash[FONTCVT_NHASH];
 static struct glyph_list glyphs[VFNT_MAPS] = {
-    TAILQ_HEAD_INITIALIZER(glyphs[0]),
-    TAILQ_HEAD_INITIALIZER(glyphs[1]),
-    TAILQ_HEAD_INITIALIZER(glyphs[2]),
-    TAILQ_HEAD_INITIALIZER(glyphs[3]),
+	TAILQ_HEAD_INITIALIZER(glyphs[0]),
+	TAILQ_HEAD_INITIALIZER(glyphs[1]),
+	TAILQ_HEAD_INITIALIZER(glyphs[2]),
+	TAILQ_HEAD_INITIALIZER(glyphs[3]),
 };
 static unsigned int glyph_total, glyph_count[4], glyph_unique, glyph_dupe;
 
@@ -79,10 +79,10 @@ struct mapping {
 
 TAILQ_HEAD(mapping_list, mapping);
 static struct mapping_list maps[VFNT_MAPS] = {
-    TAILQ_HEAD_INITIALIZER(maps[0]),
-    TAILQ_HEAD_INITIALIZER(maps[1]),
-    TAILQ_HEAD_INITIALIZER(maps[2]),
-    TAILQ_HEAD_INITIALIZER(maps[3]),
+	TAILQ_HEAD_INITIALIZER(maps[0]),
+	TAILQ_HEAD_INITIALIZER(maps[1]),
+	TAILQ_HEAD_INITIALIZER(maps[2]),
+	TAILQ_HEAD_INITIALIZER(maps[3]),
 };
 static unsigned int mapping_total, map_count[4], map_folded_count[4],
     mapping_unique, mapping_dupe;
@@ -265,10 +265,23 @@ parse_bdf(FILE *fp, unsigned int map_idx)
 
 		if (strncmp(ln, "BITMAP", 6) == 0 &&
 		    (ln[6] == ' ' || ln[6] == '\0')) {
+			/*
+			 * Assume that the next _height_ lines are bitmap
+			 * data.  ENDCHAR is allowed to terminate the bitmap
+			 * early but is not otherwise checked; any extra data
+			 * is ignored.
+			 */
 			for (i = 0; i < height; i++) {
 				if ((ln = fgetln(fp, &length)) == NULL)
 					errx(1, "Unexpected EOF!");
 				ln[length - 1] = '\0';
+				if (strcmp(ln, "ENDCHAR") == 0) {
+					memset(bytes + i * wbytes, 0,
+					    (height - i) * wbytes);
+					memset(bytes_r + i * wbytes, 0,
+					    (height - i) * wbytes);
+					break;
+				}
 				sscanf(ln, "%x", &line);
 				if (parse_bitmap_line(bytes + i * wbytes,
 				     bytes_r + i * wbytes, line, dwidth) != 0)

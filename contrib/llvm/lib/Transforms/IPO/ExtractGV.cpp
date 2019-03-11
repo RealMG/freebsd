@@ -12,8 +12,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/SetVector.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
@@ -53,7 +51,7 @@ static void makeVisible(GlobalValue &GV, bool Delete) {
 }
 
 namespace {
-  /// @brief A pass to extract specific global values and their dependencies.
+  /// A pass to extract specific global values and their dependencies.
   class GVExtractorPass : public ModulePass {
     SetVector<GlobalValue *> Named;
     bool deleteStuff;
@@ -137,6 +135,7 @@ namespace {
           llvm::Value *Declaration;
           if (FunctionType *FTy = dyn_cast<FunctionType>(Ty)) {
             Declaration = Function::Create(FTy, GlobalValue::ExternalLinkage,
+                                           CurI->getAddressSpace(),
                                            CurI->getName(), &M);
 
           } else {

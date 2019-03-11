@@ -45,9 +45,9 @@ LDIRS=	bsm cam geom net net80211 netgraph netinet netinet6 \
 LSUBDIRS=	cam/ata cam/mmc cam/nvme cam/scsi \
 	dev/acpica dev/agp dev/an dev/bktr dev/ciss dev/filemon dev/firewire \
 	dev/hwpmc dev/hyperv \
-	dev/ic dev/iicbus dev/io dev/lmc dev/mfi dev/mmc dev/nvme \
+	dev/ic dev/iicbus dev/io dev/mfi dev/mmc dev/nvme \
 	dev/ofw dev/pbio dev/pci ${_dev_powermac_nvram} dev/ppbus dev/smbus \
-	dev/speaker dev/vkbd dev/wi \
+	dev/speaker dev/tcp_log dev/veriexec dev/vkbd dev/wi \
 	fs/devfs fs/fdescfs fs/msdosfs fs/nandfs fs/nfs fs/nullfs \
 	fs/procfs fs/smbfs fs/udf fs/unionfs \
 	geom/cache geom/concat geom/eli geom/gate geom/journal geom/label \
@@ -56,9 +56,11 @@ LSUBDIRS=	cam/ata cam/mmc cam/nvme cam/scsi \
 	net/altq \
 	netgraph/atm netgraph/netflow \
 	netinet/cc \
+	netinet/netdump \
 	security/audit \
 	security/mac_biba security/mac_bsdextended security/mac_lomac \
 	security/mac_mls security/mac_partition \
+	security/mac_veriexec \
 	sys/disk \
 	ufs/ffs ufs/ufs
 
@@ -142,7 +144,7 @@ compat:
 		rm -f ${SDESTDIR}${INCLUDEDIR}/$i; \
 	fi
 .endfor
-	mtree -deU ${MTREE_FOLLOWS_SYMLINKS} \
+	mtree -deU ${NO_ROOT:D-W} ${MTREE_FOLLOWS_SYMLINKS} \
 	    -f ${SRCTOP}/etc/mtree/BSD.include.dist \
 	    -p ${SDESTDIR}${INCLUDEDIR} > /dev/null
 
@@ -156,7 +158,7 @@ copies: .PHONY .META
 		done; \
 	fi
 .endfor
-.for i in ${LDIRS} ${LSUBDIRS:Ndev/agp:Ndev/acpica:Ndev/bktr:Ndev/evdev:Ndev/hyperv:Ndev/nand:Ndev/pci} ${LSUBSUBDIRS}
+.for i in ${LDIRS} ${LSUBDIRS:Ndev/agp:Ndev/acpica:Ndev/bktr:Ndev/evdev:Ndev/hyperv:Ndev/nand:Ndev/pci:Ndev/veriexec} ${LSUBSUBDIRS}
 	cd ${SRCTOP}/sys; \
 	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 $i/*.h \
 	    ${SDESTDIR}${INCLUDEDIR}/$i
@@ -195,6 +197,9 @@ copies: .PHONY .META
 	cd ${SRCTOP}/sys/dev/pci; \
 	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 pcireg.h \
 	    ${SDESTDIR}${INCLUDEDIR}/dev/pci
+	cd ${SRCTOP}/sys/dev/veriexec; \
+	${INSTALL} -C -o ${BINOWN} -g ${BINGRP} -m 444 veriexec_ioctl.h \
+	    ${SDESTDIR}${INCLUDEDIR}/dev/veriexec
 	cd ${SRCTOP}/sys/fs/cd9660/; \
 	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 *.h \
 	    ${SDESTDIR}${INCLUDEDIR}/isofs/cd9660
@@ -245,15 +250,14 @@ copies: .PHONY .META
 	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 teken.h \
 	    ${SDESTDIR}${INCLUDEDIR}/teken
 .if ${MK_CDDL} != "no"
-	cd ${SRCTOP}/cddl/contrib/opensolaris/lib/libzfs_core/common; \
-	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 libzfs_core.h \
-	    ${SDESTDIR}${INCLUDEDIR}
-	cd ${SRCTOP}/cddl/contrib/opensolaris/lib/libnvpair; \
-	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 libnvpair.h \
-	    ${SDESTDIR}${INCLUDEDIR}
 	cd ${SRCTOP}/sys/cddl/contrib/opensolaris/uts/common/sys; \
 	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 nvpair.h \
 	    ${SDESTDIR}${INCLUDEDIR}/sys
+.endif
+.if ${MK_MLX5TOOL} != "no"
+	cd ${SRCTOP}/sys/dev/mlx5; \
+	${INSTALL} -C ${TAG_ARGS} -o ${BINOWN} -g ${BINGRP} -m 444 mlx5io.h \
+	    ${SDESTDIR}${INCLUDEDIR}/dev/mlx5
 .endif
 
 symlinks: .PHONY .META
@@ -264,7 +268,7 @@ symlinks: .PHONY .META
 		${INSTALL_SYMLINK} ${TAG_ARGS} ../../../sys/$i/$$h ${SDESTDIR}${INCLUDEDIR}/$i; \
 	done
 .endfor
-.for i in ${LSUBDIRS:Ndev/agp:Ndev/acpica:Ndev/bktr:Ndev/evdev:Ndev/hyperv:Ndev/nand:Ndev/pci}
+.for i in ${LSUBDIRS:Ndev/agp:Ndev/acpica:Ndev/bktr:Ndev/evdev:Ndev/hyperv:Ndev/nand:Ndev/pci:Ndev/veriexec}
 	cd ${SRCTOP}/sys/$i; \
 	for h in *.h; do \
 		${INSTALL_SYMLINK} ${TAG_ARGS} ../../../../sys/$i/$$h ${SDESTDIR}${INCLUDEDIR}/$i; \
@@ -311,6 +315,11 @@ symlinks: .PHONY .META
 	for h in pcireg.h; do \
 		${INSTALL_SYMLINK} ${TAG_ARGS} ../../../../sys/dev/pci/$$h \
 		    ${SDESTDIR}${INCLUDEDIR}/dev/pci; \
+	done
+	cd ${SRCTOP}/sys/dev/veriexec; \
+	for h in veriexec_ioctl.h; do \
+		ln -fs ../../../../sys/dev/veriexec/$$h \
+		    ${SDESTDIR}${INCLUDEDIR}/dev/veriexec; \
 	done
 .for i in ${LSUBSUBDIRS}
 	cd ${SRCTOP}/sys/$i; \
@@ -384,6 +393,15 @@ symlinks: .PHONY .META
 		${INSTALL_SYMLINK} ${TAG_ARGS} ../../../sys/rpc/$$h \
 		    ${SDESTDIR}${INCLUDEDIR}/rpc; \
 	done
+.if ${MK_CDDL} != "no"
+	${INSTALL_SYMLINK} ${TAG_ARGS} \
+	    ../../../sys/cddl/contrib/opensolaris/uts/common/sys/nvpair.h \
+	    ${SDESTDIR}${INCLUDEDIR}/sys
+.endif
+.if ${MK_MLX5TOOL} != "no"
+	${INSTALL_SYMLINK} ${TAG_ARGS} ../../../../sys/dev/mlx5/mlx5io.h \
+	    ${SDESTDIR}${INCLUDEDIR}/dev/mlx5
+.endif
 
 .include <bsd.prog.mk>
 

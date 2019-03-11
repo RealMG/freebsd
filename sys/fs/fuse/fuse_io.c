@@ -1,4 +1,6 @@
-/*
+/*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 2007-2009 Google Inc.
  * All rights reserved.
  *
@@ -153,7 +155,13 @@ fuse_io_dispatch(struct vnode *vp, struct uio *uio, int ioflag,
 		}
 		break;
 	case UIO_WRITE:
-		if (directio) {
+		/*
+		 * Kludge: simulate write-through caching via write-around
+		 * caching.  Same effect, as far as never caching dirty data,
+		 * but slightly pessimal in that newly written data is not
+		 * cached.
+		 */
+		if (directio || fuse_data_cache_mode == FUSE_CACHE_WT) {
 			FS_DEBUG("direct write of vnode %ju via file handle %ju\n",
 			    (uintmax_t)VTOILLU(vp), (uintmax_t)fufh->fh_id);
 			err = fuse_write_directbackend(vp, uio, cred, fufh, ioflag);
@@ -190,7 +198,7 @@ fuse_read_biobackend(struct vnode *vp, struct uio *uio,
 	if (uio->uio_offset < 0)
 		return (EINVAL);
 
-	bcount = MIN(MAXBSIZE, biosize);
+	bcount = biosize;
 	filesize = VTOFUD(vp)->filesize;
 
 	do {
@@ -360,8 +368,11 @@ fuse_write_directbackend(struct vnode *vp, struct uio *uio,
 		}
 		uio->uio_resid += diff;
 		uio->uio_offset -= diff;
-		if (uio->uio_offset > fvdat->filesize)
+		if (uio->uio_offset > fvdat->filesize &&
+		    fuse_data_cache_mode != FUSE_CACHE_UC) {
 			fuse_vnode_setsize(vp, cred, uio->uio_offset);
+			fvdat->flag &= ~FN_SIZECHANGE;
+		}
 	}
 
 	fdisp_destroy(&fdi);
@@ -653,6 +664,7 @@ fuse_io_strategy(struct vnode *vp, struct buf *bp)
 		uiop->uio_offset = ((off_t)bp->b_blkno) * biosize;
 		error = fuse_read_directbackend(vp, uiop, cred, fufh);
 
+		/* XXXCEM: Potentially invalid access to cached_attrs here */
 		if ((!error && uiop->uio_resid) ||
 		    (fsess_opt_brokenio(vnode_mount(vp)) && error == EIO &&
 		    uiop->uio_offset < fvdat->filesize && fvdat->filesize > 0 &&

@@ -50,6 +50,8 @@ class ThreadContextBase {
   u32 parent_tid;
   ThreadContextBase *next;  // For storing thread contexts in a list.
 
+  atomic_uint32_t thread_destroyed; // To address race of Joined vs Finished
+
   void SetName(const char *new_name);
 
   void SetDead();
@@ -59,6 +61,9 @@ class ThreadContextBase {
   void SetCreated(uptr _user_id, u64 _unique_id, bool _detached,
                   u32 _parent_tid, void *arg);
   void Reset();
+
+  void SetDestroyed();
+  bool GetDestroyed();
 
   // The following methods may be overriden by subclasses.
   // Some of them take opaque arg that may be optionally be used
@@ -117,6 +122,7 @@ class ThreadRegistry {
   void JoinThread(u32 tid, void *arg);
   void FinishThread(u32 tid);
   void StartThread(u32 tid, tid_t os_id, bool workerthread, void *arg);
+  void SetThreadUserId(u32 tid, uptr user_id);
 
  private:
   const ThreadContextFactory context_factory_;

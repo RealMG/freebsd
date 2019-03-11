@@ -1,4 +1,6 @@
-/*
+/*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 2007-2009 Google Inc. and Amit Singh
  * All rights reserved.
  *
@@ -86,21 +88,17 @@ __FBSDID("$FreeBSD$");
 static int fuse_fh_count = 0;
 
 SYSCTL_INT(_vfs_fuse, OID_AUTO, filehandle_count, CTLFLAG_RD,
-    &fuse_fh_count, 0, "");
+    &fuse_fh_count, 0, "number of open FUSE filehandles");
 
 int
-fuse_filehandle_open(struct vnode *vp,
-    fufh_type_t fufh_type,
-    struct fuse_filehandle **fufhp,
-    struct thread *td,
-    struct ucred *cred)
+fuse_filehandle_open(struct vnode *vp, fufh_type_t fufh_type,
+    struct fuse_filehandle **fufhp, struct thread *td, struct ucred *cred)
 {
 	struct fuse_dispatcher fdi;
 	struct fuse_open_in *foi;
 	struct fuse_open_out *foo;
 
 	int err = 0;
-	int isdir = 0;
 	int oflags = 0;
 	int op = FUSE_OPEN;
 
@@ -113,12 +111,11 @@ fuse_filehandle_open(struct vnode *vp,
 		/* NOTREACHED */
 	}
 	/*
-         * Note that this means we are effectively FILTERING OUT open() flags.
-         */
+	 * Note that this means we are effectively FILTERING OUT open() flags.
+	 */
 	oflags = fuse_filehandle_xlate_to_oflags(fufh_type);
 
 	if (vnode_isdir(vp)) {
-		isdir = 1;
 		op = FUSE_OPENDIR;
 		if (fufh_type != FUFH_RDONLY) {
 			printf("FUSE:non-rdonly fh requested for a directory?\n");
@@ -159,10 +156,8 @@ out:
 }
 
 int
-fuse_filehandle_close(struct vnode *vp,
-    fufh_type_t fufh_type,
-    struct thread *td,
-    struct ucred *cred)
+fuse_filehandle_close(struct vnode *vp, fufh_type_t fufh_type,
+    struct thread *td, struct ucred *cred)
 {
 	struct fuse_dispatcher fdi;
 	struct fuse_release_in *fri;
@@ -170,7 +165,6 @@ fuse_filehandle_close(struct vnode *vp,
 	struct fuse_filehandle *fufh = NULL;
 
 	int err = 0;
-	int isdir = 0;
 	int op = FUSE_RELEASE;
 
 	fuse_trace_printf("fuse_filehandle_put(vp=%p, fufh_type=%d)\n",
@@ -185,10 +179,8 @@ fuse_filehandle_close(struct vnode *vp,
 	if (fuse_isdeadfs(vp)) {
 		goto out;
 	}
-	if (vnode_isdir(vp)) {
+	if (vnode_isdir(vp))
 		op = FUSE_RELEASEDIR;
-		isdir = 1;
-	}
 	fdisp_init(&fdi, sizeof(*fri));
 	fdisp_make_vp(&fdi, op, vp, td, cred);
 	fri = fdi.indata;
@@ -268,10 +260,8 @@ fuse_filehandle_getrw(struct vnode *vp, fufh_type_t fufh_type,
 }
 
 void
-fuse_filehandle_init(struct vnode *vp,
-    fufh_type_t fufh_type,
-    struct fuse_filehandle **fufhp,
-    uint64_t fh_id)
+fuse_filehandle_init(struct vnode *vp, fufh_type_t fufh_type,
+    struct fuse_filehandle **fufhp, uint64_t fh_id)
 {
 	struct fuse_vnode_data *fvdat = VTOFUD(vp);
 	struct fuse_filehandle *fufh;

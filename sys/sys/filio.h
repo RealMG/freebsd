@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1982, 1986, 1990, 1993, 1994
  *	The Regents of the University of California.  All rights reserved.
  * (c) UNIX System Laboratories, Inc.
@@ -60,5 +62,17 @@ struct fiodgname_arg {
 /* Handle lseek SEEK_DATA and SEEK_HOLE for holey file knowledge. */
 #define	FIOSEEKDATA	_IOWR('f', 97, off_t)	/* SEEK_DATA */
 #define	FIOSEEKHOLE	_IOWR('f', 98, off_t)	/* SEEK_HOLE */
+
+#ifdef _KERNEL
+#ifdef COMPAT_FREEBSD32
+struct fiodgname_arg32 {
+	int		len;
+	uint32_t	buf;	/* (void *) */
+};
+#define	FIODGNAME_32	_IOC_NEWTYPE(FIODGNAME, struct fiodgname_arg32)
+#endif
+
+void	*fiodgname_buf_get_ptr(void *fgnp, u_long com);
+#endif
 
 #endif /* !_SYS_FILIO_H_ */

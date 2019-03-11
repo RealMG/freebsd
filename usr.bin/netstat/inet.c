@@ -41,6 +41,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/domain.h>
 #include <sys/protosw.h>
 #include <sys/socket.h>
+#define	_WANT_SOCKET
 #include <sys/socketvar.h>
 #include <sys/sysctl.h>
 
@@ -84,8 +85,10 @@ __FBSDID("$FreeBSD$");
 #include "netstat.h"
 #include "nl_defs.h"
 
-void	inetprint(const char *, struct in_addr *, int, const char *, int,
+#ifdef INET
+static void inetprint(const char *, struct in_addr *, int, const char *, int,
     const int);
+#endif
 #ifdef INET6
 static int udp_done, tcp_done, sdp_done;
 #endif /* INET6 */
@@ -158,12 +161,12 @@ sotoxsocket(struct socket *so, struct xsocket *xso)
 
 	bzero(xso, sizeof *xso);
 	xso->xso_len = sizeof *xso;
-	xso->xso_so = so;
+	xso->xso_so = (uintptr_t)so;
 	xso->so_type = so->so_type;
 	xso->so_options = so->so_options;
 	xso->so_linger = so->so_linger;
 	xso->so_state = so->so_state;
-	xso->so_pcb = so->so_pcb;
+	xso->so_pcb = (uintptr_t)so->so_pcb;
 	if (kread((uintptr_t)so->so_proto, &proto, sizeof(proto)) != 0)
 		return (-1);
 	xso->xso_protocol = proto.pr_protocol;
@@ -172,7 +175,7 @@ sotoxsocket(struct socket *so, struct xsocket *xso)
 	xso->xso_family = domain.dom_family;
 	xso->so_timeo = so->so_timeo;
 	xso->so_error = so->so_error;
-	if (SOLISTENING(so)) {
+	if ((so->so_options & SO_ACCEPTCONN) != 0) {
 		xso->so_qlen = so->sol_qlen;
 		xso->so_incqlen = so->sol_incqlen;
 		xso->so_qlimit = so->sol_qlimit;
@@ -320,7 +323,7 @@ protopr(u_long off, const char *name, int af1, int proto)
 				    "Proto", "Recv-Q", "Send-Q",
 				    "Local Address", "Foreign Address");
 				if (!xflag && !Rflag)
-					xo_emit(" (state)");
+					xo_emit(" {T:/%-11.11s}", "(state)");
 			}
 			if (xflag) {
 				xo_emit(" {T:/%-6.6s} {T:/%-6.6s} {T:/%-6.6s} "
@@ -338,6 +341,8 @@ protopr(u_long off, const char *name, int af1, int proto)
 				xo_emit("  {T:/%8.8s} {T:/%5.5s}",
 				    "flowid", "ftype");
 			}
+			if (Pflag)
+				xo_emit(" {T:/%s}", "Log ID");
 			xo_emit("\n");
 			first = 0;
 		}
@@ -387,6 +392,7 @@ protopr(u_long off, const char *name, int af1, int proto)
 			    so->so_rcv.sb_cc, so->so_snd.sb_cc);
 		}
 		if (numeric_port) {
+#ifdef INET
 			if (inp->inp_vflag & INP_IPV4) {
 				inetprint("local", &inp->inp_laddr,
 				    (int)inp->inp_lport, name, 1, af1);
@@ -394,8 +400,12 @@ protopr(u_long off, const char *name, int af1, int proto)
 					inetprint("remote", &inp->inp_faddr,
 					    (int)inp->inp_fport, name, 1, af1);
 			}
+#endif
+#if defined(INET) && defined(INET6)
+			else
+#endif
 #ifdef INET6
-			else if (inp->inp_vflag & INP_IPV6) {
+			if (inp->inp_vflag & INP_IPV6) {
 				inet6print("local", &inp->in6p_laddr,
 				    (int)inp->inp_lport, name, 1);
 				if (!Lflag)
@@ -404,6 +414,7 @@ protopr(u_long off, const char *name, int af1, int proto)
 			} /* else nothing printed now */
 #endif /* INET6 */
 		} else if (inp->inp_flags & INP_ANONPORT) {
+#ifdef INET
 			if (inp->inp_vflag & INP_IPV4) {
 				inetprint("local", &inp->inp_laddr,
 				    (int)inp->inp_lport, name, 1, af1);
@@ -411,8 +422,12 @@ protopr(u_long off, const char *name, int af1, int proto)
 					inetprint("remote", &inp->inp_faddr,
 					    (int)inp->inp_fport, name, 0, af1);
 			}
+#endif
+#if defined(INET) && defined(INET6)
+			else
+#endif
 #ifdef INET6
-			else if (inp->inp_vflag & INP_IPV6) {
+			if (inp->inp_vflag & INP_IPV6) {
 				inet6print("local", &inp->in6p_laddr,
 				    (int)inp->inp_lport, name, 1);
 				if (!Lflag)
@@ -421,6 +436,7 @@ protopr(u_long off, const char *name, int af1, int proto)
 			} /* else nothing printed now */
 #endif /* INET6 */
 		} else {
+#ifdef INET
 			if (inp->inp_vflag & INP_IPV4) {
 				inetprint("local", &inp->inp_laddr,
 				    (int)inp->inp_lport, name, 0, af1);
@@ -430,8 +446,12 @@ protopr(u_long off, const char *name, int af1, int proto)
 					    inp->inp_lport != inp->inp_fport,
 					    af1);
 			}
+#endif
+#if defined(INET) && defined(INET6)
+			else
+#endif
 #ifdef INET6
-			else if (inp->inp_vflag & INP_IPV6) {
+			if (inp->inp_vflag & INP_IPV6) {
 				inet6print("local", &inp->in6p_laddr,
 				    (int)inp->inp_lport, name, 0);
 				if (!Lflag)
@@ -477,9 +497,9 @@ protopr(u_long off, const char *name, int af1, int proto)
 		}
 		if (istcp && !Lflag && !xflag && !Tflag && !Rflag) {
 			if (tp->t_state < 0 || tp->t_state >= TCP_NSTATES)
-				xo_emit("{:tcp-state/%d}", tp->t_state);
+				xo_emit("{:tcp-state/%-11d}", tp->t_state);
 			else {
-				xo_emit("{:tcp-state/%s}",
+				xo_emit("{:tcp-state/%-11s}",
 				    tcpstates[tp->t_state]);
 #if defined(TF_NEEDSYN) && defined(TF_NEEDFIN)
 				/* Show T/TCP `hidden state' */
@@ -494,6 +514,9 @@ protopr(u_long off, const char *name, int af1, int proto)
 			    inp->inp_flowid,
 			    inp->inp_flowtype);
 		}
+		if (istcp && Pflag)
+			xo_emit(" {:log-id/%s}", tp->xt_logid[0] == '\0' ?
+			    "-" : tp->xt_logid);
 		xo_emit("\n");
 		xo_close_instance("socket");
 	}
@@ -1021,6 +1044,7 @@ arp_stats(u_long off, const char *name, int af1 __unused, int proto __unused)
 	xo_emit("\t" m, (uintmax_t)arpstat.f, pluralies(arpstat.f))
 
 	p(txrequests, "{:sent-requests/%ju} {N:/ARP request%s sent}\n");
+	p(txerrors, "{:sent-failures/%ju} {N:/ARP request%s failed to sent}\n");
 	p2(txreplies, "{:sent-replies/%ju} {N:/ARP repl%s sent}\n");
 	p(rxrequests, "{:received-requests/%ju} "
 	    "{N:/ARP request%s received}\n");
@@ -1308,10 +1332,11 @@ pim_stats(u_long off __unused, const char *name, int af1 __unused,
 	xo_close_container(name);
 }
 
+#ifdef INET
 /*
  * Pretty print an Internet address (net address + port).
  */
-void
+static void
 inetprint(const char *container, struct in_addr *in, int port,
     const char *proto, int num_port, const int af1)
 {
@@ -1398,3 +1423,4 @@ inetname(struct in_addr *inp)
 	}
 	return (line);
 }
+#endif

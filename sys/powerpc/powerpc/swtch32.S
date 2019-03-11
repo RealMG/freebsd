@@ -56,7 +56,7 @@
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "assym.s"
+#include "assym.inc"
 #include "opt_sched.h"
 
 #include <sys/syscall.h>
@@ -113,6 +113,10 @@ ENTRY(cpu_switch)
 	bl	save_vec
 	
 .L2:
+#if defined(__SPE__)
+	mfspr	%r3,SPR_SPEFSCR
+	stw	%r3,PCB_VSCR(%r17)
+#endif
 	mr	%r3,%r14		/* restore old thread ptr */
 	bl	pmap_deactivate		/* Deactivate the current pmap */
 
@@ -163,6 +167,10 @@ blocked_loop:
 	bl	enable_vec
 
 .L4:
+#if defined(__SPE__)
+	lwz	%r3,PCB_VSCR(%r17)
+	mtspr	SPR_SPEFSCR,%r3
+#endif
 	/* thread to restore is in r3 */
 	mr	%r3,%r17		/* Recover PCB ptr */
 	lmw	%r12,PCB_CONTEXT(%r3)	/* Load the non-volatile GP regs */
@@ -187,6 +195,7 @@ ENTRY(savectx)
 	stmw	%r12,PCB_CONTEXT(%r3)	/* Save the non-volatile GP regs */
 	mfcr	%r4			/* Save the condition register */
 	stw	%r4,PCB_CR(%r3)
+	stw	%r1,PCB_SP(%r3)		/* Save the stack pointer */
 	mflr	%r4			/* Save the link register */
 	stw	%r4,PCB_LR(%r3)
 	blr
@@ -204,4 +213,8 @@ ENTRY(fork_trampoline)
 					   trapframe to simulate FRAME_SETUP
 					   does when allocating space for
 					   a frame pointer/saved LR */
+#ifdef __SPE__
+	li	%r3,SPEFSCR_FINVE|SPEFSCR_FDBZE|SPEFSCR_FUNFE|SPEFSCR_FOVFE
+	mtspr	SPR_SPEFSCR, %r3
+#endif
 	b	trapexit

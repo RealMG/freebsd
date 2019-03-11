@@ -18,6 +18,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/ObjectYAML/CodeViewYAMLDebugSections.h"
+#include "llvm/ObjectYAML/CodeViewYAMLTypeHashing.h"
 #include "llvm/ObjectYAML/CodeViewYAMLTypes.h"
 #include "llvm/ObjectYAML/YAML.h"
 #include <cstdint>
@@ -57,7 +58,13 @@ LLVM_YAML_STRONG_TYPEDEF(uint8_t, AuxSymbolType)
 struct Relocation {
   uint32_t VirtualAddress;
   uint16_t Type;
+
+  // Normally a Relocation can refer to the symbol via its name.
+  // It can also use a direct symbol table index instead (with no name
+  // specified), allowing disambiguating between multiple symbols with the
+  // same name or crafting intentionally broken files for testing.
   StringRef SymbolName;
+  Optional<uint32_t> SymbolTableIndex;
 };
 
 struct Section {
@@ -66,6 +73,8 @@ struct Section {
   yaml::BinaryRef SectionData;
   std::vector<CodeViewYAML::YAMLDebugSubsection> DebugS;
   std::vector<CodeViewYAML::LeafRecord> DebugT;
+  std::vector<CodeViewYAML::LeafRecord> DebugP;
+  Optional<CodeViewYAML::DebugHSection> DebugH;
   std::vector<Relocation> Relocations;
   StringRef Name;
 
@@ -155,6 +164,16 @@ struct ScalarEnumerationTraits<COFF::RelocationTypeI386> {
 template <>
 struct ScalarEnumerationTraits<COFF::RelocationTypeAMD64> {
   static void enumeration(IO &IO, COFF::RelocationTypeAMD64 &Value);
+};
+
+template <>
+struct ScalarEnumerationTraits<COFF::RelocationTypesARM> {
+  static void enumeration(IO &IO, COFF::RelocationTypesARM &Value);
+};
+
+template <>
+struct ScalarEnumerationTraits<COFF::RelocationTypesARM64> {
+  static void enumeration(IO &IO, COFF::RelocationTypesARM64 &Value);
 };
 
 template <>

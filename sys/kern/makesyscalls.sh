@@ -45,13 +45,7 @@ sysarg="sysarg.switch.$$"
 sysprotoend="sysprotoend.$$"
 systracetmp="systrace.$$"
 systraceret="systraceret.$$"
-
-if [ -r capabilities.conf ]; then
-	capenabled=`cat capabilities.conf | grep -v "^#" | grep -v "^$"`
-	capenabled=`echo $capenabled | sed 's/ /,/g'`
-else
-	capenabled=""
-fi
+capabilities_conf="capabilities.conf"
 
 trap "rm $sysaue $sysdcl $syscompat $syscompatdcl $syscompat4 $syscompat4dcl $syscompat6 $syscompat6dcl $syscompat7 $syscompat7dcl $syscompat10 $syscompat10dcl $syscompat11 $syscompat11dcl $sysent $sysinc $sysarg $sysprotoend $systracetmp $systraceret" 0
 
@@ -67,14 +61,41 @@ if [ -n "$2" ]; then
 	. $2
 fi
 
+if [ -r $capabilities_conf ]; then
+	capenabled=`egrep -v '^#|^$' $capabilities_conf`
+	capenabled=`echo $capenabled | sed 's/ /,/g'`
+else
+	capenabled=""
+fi
+
 sed -e '
-:join
+	# FreeBSD ID, includes, comments, and blank lines
+	/.*\$FreeBSD/b done_joining
+	/^[#;]/b done_joining
+	/^$/b done_joining
+
+	# Join lines ending in backslash
+:joining
 	/\\$/{a\
 
 	N
 	s/\\\n//
-	b join
+	b joining
 	}
+
+	# OBSOL, etc lines without function signatures
+	/^[0-9][^{]*$/b done_joining
+
+	# Join incomplete signatures.  The { must appear on the first line
+	# and the } must appear on the last line (modulo lines joined by
+	# backslashes).
+	/^[^}]*$/{a\
+
+	N
+	s/\n//
+	b joining
+	}
+:done_joining
 2,${
 	/^#/!s/\([{}()*,]\)/ \1 /g
 }
@@ -117,6 +138,7 @@ sed -e '
 		switchname = \"$switchname\"
 		namesname = \"$namesname\"
 		infile = \"$1\"
+		abi_func_prefix = \"$abi_func_prefix\"
 		capenabled_string = \"$capenabled\"
 		"'
 
@@ -139,6 +161,7 @@ sed -e '
 		printf "#include <sys/signal.h>\n" > sysarg
 		printf "#include <sys/acl.h>\n" > sysarg
 		printf "#include <sys/cpuset.h>\n" > sysarg
+		printf "#include <sys/domainset.h>\n" > sysarg
 		printf "#include <sys/_ffcounter.h>\n" > sysarg
 		printf "#include <sys/_semaphore.h>\n" > sysarg
 		printf "#include <sys/ucontext.h>\n" > sysarg
@@ -253,13 +276,6 @@ sed -e '
 		print > systraceret
 		next
 	}
-	syscall != $1 {
-		printf "%s: line %d: syscall number out of sync at %d\n",
-		    infile, NR, syscall
-		printf "line is:\n"
-		print
-		exit 1
-	}
 	# Returns true if the type "name" is the first flag in the type field
 	function type(name, flags, n) {
 		n = split($3, flags, /\|/)
@@ -272,6 +288,29 @@ sed -e '
 			if (flags[i] == name)
 				return 1
 		return 0
+	}
+	{
+		n = split($1, syscall_range, /-/)
+		if (n == 1) {
+			syscall_range[2] = syscall_range[1]
+		} else if (n == 2) {
+			if (!type("UNIMPL")) {
+				printf "%s: line %d: range permitted only with UNIMPL\n",
+				    infile, NR
+				exit 1
+			}
+		} else {
+			printf "%s: line %d: invalid syscall number or range %s\n",
+			    infile, NR, $1
+			exit 1
+		}
+	}
+	syscall != syscall_range[1] {
+		printf "%s: line %d: syscall number out of sync at %d\n",
+		    infile, NR, syscall
+		printf "line is:\n"
+		print
+		exit 1
 	}
 	function align_sysent_comment(column) {
 		printf("\t") > sysent
@@ -288,6 +327,7 @@ sed -e '
 	}
 	function parseline() {
 		f=4			# toss number, type, audit event
+		ret_inc = 0
 		argc= 0;
 		argssize = "0"
 		thr_flag = "SY_THR_STATIC"
@@ -303,12 +343,15 @@ sed -e '
 			funcalias=""
 			argalias=""
 			rettype="int"
+			if ($(f+2) == "*") {
+				ret_inc = 1
+			}
 			end=NF
 		}
 		if (flag("NODEF")) {
 			auditev="AUE_NULL"
-			funcname=$4
-			argssize = "AS(" $6 ")"
+			funcname=$(4 + ret_inc)
+			argssize = "AS(" $(6 + ret_inc) ")"
 			return
 		}
 		if ($f != "{")
@@ -326,6 +369,11 @@ sed -e '
 
 		syscallret=$f
 		f++
+		while (ret_inc > 0) {
+			syscallret=syscallret " " $f
+			f++
+			ret_inc--
+		}
 
 		funcname=$f
 
@@ -335,7 +383,8 @@ sed -e '
 		# from it.
 		#
 		for (cap in capenabled) {
-			if (funcname == capenabled[cap]) {
+			if (funcname == capenabled[cap] ||
+			    funcname == abi_func_prefix capenabled[cap]) {
 				flags = "SYF_CAPENABLED";
 				break;
 			}
@@ -383,6 +432,16 @@ sed -e '
 			}
 			if (argtype[argc] == "")
 				parserr($f, "argument definition")
+
+			# The parser adds space around parens.
+			# Remove it from annotations.
+			gsub(/ \( /, "(", argtype[argc]);
+			gsub(/ \)/, ")", argtype[argc]);
+
+			#remove annotations
+			gsub(/_In[^ ]*[_)] /, "", argtype[argc]);
+			gsub(/_Out[^ ]*[_)] /, "", argtype[argc]);
+
 			argname[argc]=$f;
 			f += 2;			# skip name, and any comma
 		}
@@ -467,8 +526,7 @@ sed -e '
 		if (!flag("NOPROTO") && !flag("NODEF")) {
 			if (funcname == "nosys" || funcname == "lkmnosys" ||
 			    funcname == "sysarch" || funcname ~ /^freebsd/ || 
-			    funcname ~ /^linux/ || funcname ~ /^ibcs2/ ||
-			    funcname ~ /^xenix/ || funcname ~ /^cloudabi/) {
+			    funcname ~ /^linux/ || funcname ~ /^cloudabi/) {
 				printf("%s\t%s(struct thread *, struct %s *)",
 				    rettype, funcname, argalias) > sysdcl
 			} else {
@@ -487,8 +545,7 @@ sed -e '
 		} else {
 			if (funcname == "nosys" || funcname == "sysarch" || 
 			    funcname == "lkmnosys" || funcname ~ /^freebsd/ ||
-			    funcname ~ /^linux/ || funcname ~ /^ibcs2/ ||
-			    funcname ~ /^xenix/ || funcname ~ /^cloudabi/) {
+			    funcname ~ /^linux/ || funcname ~ /^cloudabi/) {
 				printf("%s, %s, NULL, 0, 0, %s, %s },", funcname, auditev, flags, thr_flag) > sysent
 				column = column + length(funcname) + length(auditev) + length(flags) + 3 
 			} else {
@@ -613,11 +670,13 @@ sed -e '
 		next
 	}
 	type("UNIMPL") {
-		printf("\t{ 0, (sy_call_t *)nosys, AUE_NULL, NULL, 0, 0, 0, SY_THR_ABSENT },\t\t\t/* %d = %s */\n",
-		    syscall, comment) > sysent
-		printf("\t\"#%d\",\t\t\t/* %d = %s */\n",
-		    syscall, syscall, comment) > sysnames
-		syscall++
+		while (syscall <= syscall_range[2]) {
+			printf("\t{ 0, (sy_call_t *)nosys, AUE_NULL, NULL, 0, 0, 0, SY_THR_ABSENT },\t\t\t/* %d = %s */\n",
+			    syscall, comment) > sysent
+			printf("\t\"#%d\",\t\t\t/* %d = %s */\n",
+			    syscall, syscall, comment) > sysnames
+			syscall++
+		}
 		next
 	}
 	{
@@ -626,9 +685,6 @@ sed -e '
 	}
 	END {
 		printf "\n#define AS(name) (sizeof(struct name) / sizeof(register_t))\n" > sysinc
-
-		if (ncompat != 0 || ncompat4 != 0 || ncompat6 != 0 || ncompat7 != 0 || ncompat10 != 0 || ncompat11 != 0)
-			printf "#include \"opt_compat.h\"\n\n" > syssw
 
 		if (ncompat != 0) {
 			printf "\n#ifdef %s\n", compat > sysinc

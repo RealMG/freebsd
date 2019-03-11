@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright 2013 Garrett D'Amore <garrett@damore.org>
  * Copyright 2010 Nexenta Systems, Inc.  All rights reserved.
  * Copyright (c) 2002-2004 Tim J. Robbins.
@@ -46,7 +48,7 @@ mbsnrtowcs_l(wchar_t * __restrict dst, const char ** __restrict src,
 {
 	FIX_LOCALE(locale);
 	if (ps == NULL)
-		ps = &locale->mbsnrtowcs;
+		ps = &(XLOCALE_CTYPE(locale)->mbsnrtowcs);
 	return (XLOCALE_CTYPE(locale)->__mbsnrtowcs(dst, src, nms, len, ps));
 }
 size_t

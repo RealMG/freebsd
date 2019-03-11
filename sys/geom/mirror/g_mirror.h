@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2004-2006 Pawel Jakub Dawidek <pjd@FreeBSD.org>
  * All rights reserved.
  *
@@ -60,6 +62,8 @@
 #define	G_MIRROR_DISK_FLAG_HARDCODED		0x0000000000000010ULL
 #define	G_MIRROR_DISK_FLAG_BROKEN		0x0000000000000020ULL
 #define	G_MIRROR_DISK_FLAG_CANDELETE		0x0000000000000040ULL
+
+/* Per-disk flags which are recorded in on-disk metadata. */
 #define	G_MIRROR_DISK_FLAG_MASK		(G_MIRROR_DISK_FLAG_DIRTY |	\
 					 G_MIRROR_DISK_FLAG_SYNCHRONIZING | \
 					 G_MIRROR_DISK_FLAG_FORCE_SYNC | \
@@ -68,11 +72,19 @@
 
 #define	G_MIRROR_DEVICE_FLAG_NOAUTOSYNC	0x0000000000000001ULL
 #define	G_MIRROR_DEVICE_FLAG_NOFAILSYNC	0x0000000000000002ULL
+
+/* Mirror flags which are recorded in on-disk metadata. */
 #define	G_MIRROR_DEVICE_FLAG_MASK	(G_MIRROR_DEVICE_FLAG_NOAUTOSYNC | \
 					 G_MIRROR_DEVICE_FLAG_NOFAILSYNC)
 
 #ifdef _KERNEL
-extern u_int g_mirror_debug;
+#define	G_MIRROR_DEVICE_FLAG_DESTROY	0x0100000000000000ULL
+#define	G_MIRROR_DEVICE_FLAG_DRAIN	0x0200000000000000ULL
+#define	G_MIRROR_DEVICE_FLAG_CLOSEWAIT	0x0400000000000000ULL
+#define	G_MIRROR_DEVICE_FLAG_TASTING	0x0800000000000000ULL
+#define	G_MIRROR_DEVICE_FLAG_WIPE	0x1000000000000000ULL
+
+extern int g_mirror_debug;
 
 #define	G_MIRROR_DEBUG(lvl, ...)	do {				\
 	if (g_mirror_debug >= (lvl)) {					\
@@ -108,6 +120,7 @@ struct g_mirror_disk_sync {
 	off_t		  ds_offset;	/* Offset of next request to send. */
 	off_t		  ds_offset_done; /* Offset of already synchronized
 					   region. */
+	time_t		  ds_update_ts; /* Time of last metadata update. */
 	u_int		  ds_syncid;	/* Disk's synchronization ID. */
 	u_int		  ds_inflight;	/* Number of in-flight sync requests. */
 	struct bio	**ds_bios;	/* BIOs for synchronization I/O. */
@@ -141,6 +154,10 @@ struct g_mirror_disk {
 	u_int		 d_genid;	/* Disk's generation ID. */
 	struct g_mirror_disk_sync d_sync;/* Sync information. */
 	LIST_ENTRY(g_mirror_disk) d_next;
+	u_int		 d_init_ndisks;	/* Initial number of mirror components */
+	uint32_t	 d_init_slice;	/* Initial slice size */
+	uint8_t		 d_init_balance;/* Initial balance */
+	uint64_t	 d_init_mediasize;/* Initial mediasize */
 };
 #define	d_name	d_consumer->provider->name
 
@@ -155,12 +172,6 @@ struct g_mirror_event {
 	int			 e_error;
 	TAILQ_ENTRY(g_mirror_event) e_next;
 };
-
-#define	G_MIRROR_DEVICE_FLAG_DESTROY	0x0100000000000000ULL
-#define	G_MIRROR_DEVICE_FLAG_DRAIN	0x0200000000000000ULL
-#define	G_MIRROR_DEVICE_FLAG_CLOSEWAIT	0x0400000000000000ULL
-#define	G_MIRROR_DEVICE_FLAG_TASTING	0x0800000000000000ULL
-#define	G_MIRROR_DEVICE_FLAG_WIPE	0x1000000000000000ULL
 
 #define	G_MIRROR_DEVICE_STATE_STARTING		0
 #define	G_MIRROR_DEVICE_STATE_RUNNING		1
@@ -190,17 +201,14 @@ struct g_mirror_softc {
 	uint32_t	sc_id;		/* Mirror unique ID. */
 
 	struct sx	 sc_lock;
-	struct bio_queue_head sc_queue;
+	struct bio_queue sc_queue;
 	struct mtx	 sc_queue_mtx;
 	struct proc	*sc_worker;
-	struct bio_queue_head sc_regular_delayed; /* Delayed I/O requests due
-						     collision with sync
-						     requests. */
-	struct bio_queue_head sc_inflight; /* In-flight regular write
-					      requests. */
-	struct bio_queue_head sc_sync_delayed; /* Delayed sync requests due
-						  collision with regular
-						  requests. */
+	struct bio_queue sc_inflight; /* In-flight regular write requests. */
+	struct bio_queue sc_regular_delayed; /* Delayed I/O requests due to
+						collision with sync requests. */
+	struct bio_queue sc_sync_delayed; /* Delayed sync requests due to
+					     collision with regular requests. */
 
 	LIST_HEAD(, g_mirror_disk) sc_disks;
 	u_int		sc_ndisks;	/* Number of disks. */

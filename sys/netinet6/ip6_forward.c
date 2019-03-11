@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
  * All rights reserved.
  *
@@ -318,14 +320,14 @@ again2:
 	in6_clearscope(&ip6->ip6_dst);
 
 	/* Jump over all PFIL processing if hooks are not active. */
-	if (!PFIL_HOOKED(&V_inet6_pfil_hook))
+	if (!PFIL_HOOKED_OUT(V_inet6_pfil_head))
 		goto pass;
 
 	odst = ip6->ip6_dst;
-	/* Run through list of hooks for output packets. */
-	error = pfil_run_hooks(&V_inet6_pfil_hook, &m, rt->rt_ifp, PFIL_OUT, NULL);
-	if (error != 0 || m == NULL)
-		goto freecopy;		/* consumed by filter */
+	/* Run through list of hooks for forwarded packets. */
+	if (pfil_run_hooks(V_inet6_pfil_head, &m, rt->rt_ifp, PFIL_OUT |
+	    PFIL_FWD, NULL) != PFIL_PASS)
+		goto freecopy;
 	ip6 = mtod(m, struct ip6_hdr *);
 
 	/* See if destination IP address was changed by packet filter. */

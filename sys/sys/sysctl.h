@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1989, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -36,7 +38,9 @@
 #ifndef _SYS_SYSCTL_H_
 #define	_SYS_SYSCTL_H_
 
+#ifdef _KERNEL
 #include <sys/queue.h>
+#endif
 
 struct thread;
 /*
@@ -83,6 +87,7 @@ struct ctlname {
 #define	CTLFLAG_RD	0x80000000	/* Allow reads of variable */
 #define	CTLFLAG_WR	0x40000000	/* Allow writes to the variable */
 #define	CTLFLAG_RW	(CTLFLAG_RD|CTLFLAG_WR)
+#define	CTLFLAG_DORMANT	0x20000000	/* This sysctl is not active yet */
 #define	CTLFLAG_ANYBODY	0x10000000	/* All users can set this var */
 #define	CTLFLAG_SECURE	0x08000000	/* Permit set only if securelevel<=0 */
 #define	CTLFLAG_PRISON	0x04000000	/* Prisoned roots can fiddle */
@@ -144,7 +149,7 @@ struct ctlname {
 #define	REQ_WIRED	2
 
 /* definitions for sysctl_req 'flags' member */
-#if defined(__amd64__) || defined(__powerpc64__) ||\
+#if defined(__aarch64__) || defined(__amd64__) || defined(__powerpc64__) ||\
     (defined(__mips__) && defined(__mips_n64))
 #define	SCTL_MASK32	1	/* 32 bit emulation */
 #endif
@@ -160,7 +165,7 @@ struct sysctl_req {
 	size_t		 oldlen;
 	size_t		 oldidx;
 	int		(*oldfunc)(struct sysctl_req *, const void *, size_t);
-	void		*newptr;
+	const void		*newptr;
 	size_t		 newlen;
 	size_t		 newidx;
 	int		(*newfunc)(struct sysctl_req *, void *, size_t);
@@ -211,6 +216,9 @@ int sysctl_handle_counter_u64_array(SYSCTL_HANDLER_ARGS);
 int sysctl_handle_uma_zone_max(SYSCTL_HANDLER_ARGS);
 int sysctl_handle_uma_zone_cur(SYSCTL_HANDLER_ARGS);
 
+int sysctl_msec_to_sbintime(SYSCTL_HANDLER_ARGS);
+int sysctl_usec_to_sbintime(SYSCTL_HANDLER_ARGS);
+
 int sysctl_dpcpu_int(SYSCTL_HANDLER_ARGS);
 int sysctl_dpcpu_long(SYSCTL_HANDLER_ARGS);
 int sysctl_dpcpu_quad(SYSCTL_HANDLER_ARGS);
@@ -219,6 +227,8 @@ int sysctl_dpcpu_quad(SYSCTL_HANDLER_ARGS);
  * These functions are used to add/remove an oid from the mib.
  */
 void sysctl_register_oid(struct sysctl_oid *oidp);
+void sysctl_register_disabled_oid(struct sysctl_oid *oidp);
+void sysctl_enable_oid(struct sysctl_oid *oidp);
 void sysctl_unregister_oid(struct sysctl_oid *oidp);
 
 /* Declare a static oid to allow child oids to be added to it. */
@@ -792,6 +802,42 @@ TAILQ_HEAD(sysctl_ctx_list, sysctl_ctx_entry);
 	    NULL);							\
 })
 
+/* OID expressing a sbintime_t as microseconds */
+#define	SYSCTL_SBINTIME_USEC(parent, nbr, name, access, ptr, descr)	\
+	SYSCTL_OID(parent, nbr, name,					\
+	    CTLTYPE_INT | CTLFLAG_MPSAFE | CTLFLAG_RD | (access),	\
+	    (ptr), 0, sysctl_usec_to_sbintime, "Q", descr);		\
+	CTASSERT(((access) & CTLTYPE) == 0 ||				\
+	    ((access) & SYSCTL_CT_ASSERT_MASK) == CTLTYPE_S64)
+#define	SYSCTL_ADD_SBINTIME_USEC(ctx, parent, nbr, name, access, ptr, descr) \
+({									\
+	sbintime_t *__ptr = (ptr);					\
+	CTASSERT(((access) & CTLTYPE) == 0 ||				\
+	    ((access) & SYSCTL_CT_ASSERT_MASK) == CTLTYPE_S64);		\
+	sysctl_add_oid(ctx, parent, nbr, name,				\
+	    CTLTYPE_INT | CTLFLAG_MPSAFE | CTLFLAG_RD | (access),	\
+	    __ptr, 0, sysctl_usec_to_sbintime, "Q", __DESCR(descr),	\
+	    NULL);							\
+})
+
+/* OID expressing a sbintime_t as milliseconds */
+#define	SYSCTL_SBINTIME_MSEC(parent, nbr, name, access, ptr, descr)	\
+	SYSCTL_OID(parent, nbr, name,					\
+	    CTLTYPE_INT | CTLFLAG_MPSAFE | CTLFLAG_RD | (access),	\
+	    (ptr), 0, sysctl_msec_to_sbintime, "Q", descr);		\
+	CTASSERT(((access) & CTLTYPE) == 0 ||				\
+	    ((access) & SYSCTL_CT_ASSERT_MASK) == CTLTYPE_S64)
+#define	SYSCTL_ADD_SBINTIME_MSEC(ctx, parent, nbr, name, access, ptr, descr) \
+({									\
+	sbintime_t *__ptr = (ptr);					\
+	CTASSERT(((access) & CTLTYPE) == 0 ||				\
+	    ((access) & SYSCTL_CT_ASSERT_MASK) == CTLTYPE_S64);		\
+	sysctl_add_oid(ctx, parent, nbr, name,				\
+	    CTLTYPE_INT | CTLFLAG_MPSAFE | CTLFLAG_RD | (access),	\
+	    __ptr, 0, sysctl_msec_to_sbintime, "Q", __DESCR(descr),	\
+	    NULL);							\
+})
+
 /*
  * A macro to generate a read-only sysctl to indicate the presence of optional
  * kernel features.
@@ -1004,9 +1050,6 @@ SYSCTL_DECL(_compat);
 SYSCTL_DECL(_regression);
 SYSCTL_DECL(_security);
 SYSCTL_DECL(_security_bsd);
-#ifdef EXT_RESOURCES
-SYSCTL_DECL(_clock);
-#endif
 
 extern char	machine[];
 extern char	osrelease[];
@@ -1040,7 +1083,7 @@ int	kernel_sysctlbyname(struct thread *td, char *name, void *old,
 	    size_t *oldlenp, void *new, size_t newlen, size_t *retval,
 	    int flags);
 int	userland_sysctl(struct thread *td, int *name, u_int namelen, void *old,
-	    size_t *oldlenp, int inkernel, void *new, size_t newlen,
+	    size_t *oldlenp, int inkernel, const void *new, size_t newlen,
 	    size_t *retval, int flags);
 int	sysctl_find_oid(int *name, u_int namelen, struct sysctl_oid **noid,
 	    int *nindx, struct sysctl_req *req);

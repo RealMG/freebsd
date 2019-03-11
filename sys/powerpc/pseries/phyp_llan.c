@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright 2013 Nathan Whitehorn
  * All rights reserved.
  *
@@ -384,8 +386,6 @@ restart:
 		/* llan_add_rxbuf does DMA sync and unload as well as requeue */
 		if (llan_add_rxbuf(sc, rx) != 0) {
 			if_inc_counter(sc->ifp, IFCOUNTER_IERRORS, 1);
-			phyp_hcall(H_ADD_LOGICAL_LAN_BUFFER, sc->unit,
-			    rx->rx_bufdesc);
 			continue;
 		}
 
@@ -507,7 +507,7 @@ llan_set_multicast(struct llan_softc *sc)
 	phyp_hcall(H_MULTICAST_CTRL, sc->unit, LLAN_CLEAR_MULTICAST, 0);
 
 	if_maddr_rlock(ifp);
-	TAILQ_FOREACH(inm, &ifp->if_multiaddrs, ifma_link) {
+	CK_STAILQ_FOREACH(inm, &ifp->if_multiaddrs, ifma_link) {
 		if (inm->ifma_addr->sa_family != AF_LINK)
 			continue;
 

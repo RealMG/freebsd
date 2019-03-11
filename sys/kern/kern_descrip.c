@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1982, 1986, 1989, 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
  * (c) UNIX System Laboratories, Inc.
@@ -38,7 +40,6 @@
 __FBSDID("$FreeBSD$");
 
 #include "opt_capsicum.h"
-#include "opt_compat.h"
 #include "opt_ddb.h"
 #include "opt_ktrace.h"
 
@@ -109,6 +110,11 @@ static void	fdgrowtable_exp(struct filedesc *fdp, int nfd);
 static void	fdunused(struct filedesc *fdp, int fd);
 static void	fdused(struct filedesc *fdp, int fd);
 static int	getmaxfd(struct thread *td);
+static u_long	*filecaps_copy_prep(const struct filecaps *src);
+static void	filecaps_copy_finish(const struct filecaps *src,
+		    struct filecaps *dst, u_long *ioctls);
+static u_long 	*filecaps_free_prep(struct filecaps *fcaps);
+static void	filecaps_free_finish(u_long *ioctls);
 
 /*
  * Each process has:
@@ -256,7 +262,7 @@ fdused(struct filedesc *fdp, int fd)
 	if (fd > fdp->fd_lastfile)
 		fdp->fd_lastfile = fd;
 	if (fd == fdp->fd_freefile)
-		fdp->fd_freefile = fd_first_free(fdp, fd, fdp->fd_nfiles);
+		fdp->fd_freefile++;
 }
 
 /*
@@ -298,14 +304,14 @@ fdfree(struct filedesc *fdp, int fd)
 
 	fde = &fdp->fd_ofiles[fd];
 #ifdef CAPABILITIES
-	seq_write_begin(&fde->fde_seq);
+	seqc_write_begin(&fde->fde_seqc);
+#endif
+	fde->fde_file = NULL;
+#ifdef CAPABILITIES
+	seqc_write_end(&fde->fde_seqc);
 #endif
 	fdefree_last(fde);
-	fde->fde_file = NULL;
 	fdunused(fdp, fd);
-#ifdef CAPABILITIES
-	seq_write_end(&fde->fde_seq);
-#endif
 }
 
 void
@@ -342,8 +348,7 @@ sys_getdtablesize(struct thread *td, struct getdtablesize_args *uap)
 	uint64_t lim;
 #endif
 
-	td->td_retval[0] =
-	    min((int)lim_cur(td, RLIMIT_NOFILE), maxfilesperproc);
+	td->td_retval[0] = getmaxfd(td);
 #ifdef	RACCT
 	PROC_LOCK(td->td_proc);
 	lim = racct_get_limit(td->td_proc, RACCT_NOFILE);
@@ -484,7 +489,6 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 	struct filedescent *fde;
 	struct proc *p;
 	struct vnode *vp;
-	cap_rights_t rights;
 	int error, flg, tmp;
 	uint64_t bsize;
 	off_t foffset;
@@ -542,8 +546,7 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 		break;
 
 	case F_GETFL:
-		error = fget_fcntl(td, fd,
-		    cap_rights_init(&rights, CAP_FCNTL), F_GETFL, &fp);
+		error = fget_fcntl(td, fd, &cap_fcntl_rights, F_GETFL, &fp);
 		if (error != 0)
 			break;
 		td->td_retval[0] = OFLAGS(fp->f_flag);
@@ -551,8 +554,7 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 		break;
 
 	case F_SETFL:
-		error = fget_fcntl(td, fd,
-		    cap_rights_init(&rights, CAP_FCNTL), F_SETFL, &fp);
+		error = fget_fcntl(td, fd, &cap_fcntl_rights, F_SETFL, &fp);
 		if (error != 0)
 			break;
 		do {
@@ -579,8 +581,7 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 		break;
 
 	case F_GETOWN:
-		error = fget_fcntl(td, fd,
-		    cap_rights_init(&rights, CAP_FCNTL), F_GETOWN, &fp);
+		error = fget_fcntl(td, fd, &cap_fcntl_rights, F_GETOWN, &fp);
 		if (error != 0)
 			break;
 		error = fo_ioctl(fp, FIOGETOWN, &tmp, td->td_ucred, td);
@@ -590,8 +591,7 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 		break;
 
 	case F_SETOWN:
-		error = fget_fcntl(td, fd,
-		    cap_rights_init(&rights, CAP_FCNTL), F_SETOWN, &fp);
+		error = fget_fcntl(td, fd, &cap_fcntl_rights, F_SETOWN, &fp);
 		if (error != 0)
 			break;
 		tmp = arg;
@@ -612,8 +612,7 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 
 	case F_SETLK:
 	do_setlk:
-		cap_rights_init(&rights, CAP_FLOCK);
-		error = fget_unlocked(fdp, fd, &rights, &fp, NULL);
+		error = fget_unlocked(fdp, fd, &cap_flock_rights, &fp, NULL);
 		if (error != 0)
 			break;
 		if (fp->f_type != DTYPE_VNODE) {
@@ -642,9 +641,11 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 				error = EBADF;
 				break;
 			}
-			PROC_LOCK(p->p_leader);
-			p->p_leader->p_flag |= P_ADVLOCK;
-			PROC_UNLOCK(p->p_leader);
+			if ((p->p_leader->p_flag & P_ADVLOCK) == 0) {
+				PROC_LOCK(p->p_leader);
+				p->p_leader->p_flag |= P_ADVLOCK;
+				PROC_UNLOCK(p->p_leader);
+			}
 			error = VOP_ADVLOCK(vp, (caddr_t)p->p_leader, F_SETLK,
 			    flp, flg);
 			break;
@@ -653,9 +654,11 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 				error = EBADF;
 				break;
 			}
-			PROC_LOCK(p->p_leader);
-			p->p_leader->p_flag |= P_ADVLOCK;
-			PROC_UNLOCK(p->p_leader);
+			if ((p->p_leader->p_flag & P_ADVLOCK) == 0) {
+				PROC_LOCK(p->p_leader);
+				p->p_leader->p_flag |= P_ADVLOCK;
+				PROC_UNLOCK(p->p_leader);
+			}
 			error = VOP_ADVLOCK(vp, (caddr_t)p->p_leader, F_SETLK,
 			    flp, flg);
 			break;
@@ -701,7 +704,7 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 		 * that the closing thread was a bit slower and that the
 		 * advisory lock succeeded before the close.
 		 */
-		error = fget_unlocked(fdp, fd, &rights, &fp2, NULL);
+		error = fget_unlocked(fdp, fd, &cap_no_rights, &fp2, NULL);
 		if (error != 0) {
 			fdrop(fp, td);
 			break;
@@ -719,8 +722,7 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 		break;
 
 	case F_GETLK:
-		error = fget_unlocked(fdp, fd,
-		    cap_rights_init(&rights, CAP_FLOCK), &fp, NULL);
+		error = fget_unlocked(fdp, fd, &cap_flock_rights, &fp, NULL);
 		if (error != 0)
 			break;
 		if (fp->f_type != DTYPE_VNODE) {
@@ -757,8 +759,7 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 		arg = arg ? 128 * 1024: 0;
 		/* FALLTHROUGH */
 	case F_READAHEAD:
-		error = fget_unlocked(fdp, fd,
-		    cap_rights_init(&rights), &fp, NULL);
+		error = fget_unlocked(fdp, fd, &cap_no_rights, &fp, NULL);
 		if (error != 0)
 			break;
 		if (fp->f_type != DTYPE_VNODE) {
@@ -811,10 +812,12 @@ kern_dup(struct thread *td, u_int mode, int flags, int old, int new)
 	struct filedescent *oldfde, *newfde;
 	struct proc *p;
 	struct file *delfp;
+	u_long *oioctls, *nioctls;
 	int error, maxfd;
 
 	p = td->td_proc;
 	fdp = p->p_fd;
+	oioctls = NULL;
 
 	MPASS((flags & ~(FDDUP_FLAG_CLOEXEC)) == 0);
 	MPASS(mode < FDDUP_LASTMODE);
@@ -874,10 +877,8 @@ kern_dup(struct thread *td, u_int mode, int flags, int old, int new)
 			 * the limit on the size of the file descriptor table.
 			 */
 #ifdef RACCT
-			if (racct_enable) {
-				PROC_LOCK(p);
-				error = racct_set(p, RACCT_NOFILE, new + 1);
-				PROC_UNLOCK(p);
+			if (RACCT_ENABLED()) {
+				error = racct_set_unlocked(p, RACCT_NOFILE, new + 1);
 				if (error != 0) {
 					error = EMFILE;
 					goto unlock;
@@ -900,21 +901,24 @@ kern_dup(struct thread *td, u_int mode, int flags, int old, int new)
 	newfde = &fdp->fd_ofiles[new];
 	delfp = newfde->fde_file;
 
+	oioctls = filecaps_free_prep(&newfde->fde_caps);
+	nioctls = filecaps_copy_prep(&oldfde->fde_caps);
+
 	/*
 	 * Duplicate the source descriptor.
 	 */
 #ifdef CAPABILITIES
-	seq_write_begin(&newfde->fde_seq);
+	seqc_write_begin(&newfde->fde_seqc);
 #endif
-	filecaps_free(&newfde->fde_caps);
 	memcpy(newfde, oldfde, fde_change_size);
-	filecaps_copy(&oldfde->fde_caps, &newfde->fde_caps, true);
+	filecaps_copy_finish(&oldfde->fde_caps, &newfde->fde_caps,
+	    nioctls);
 	if ((flags & FDDUP_FLAG_CLOEXEC) != 0)
 		newfde->fde_flags = oldfde->fde_flags | UF_EXCLOSE;
 	else
 		newfde->fde_flags = oldfde->fde_flags & ~UF_EXCLOSE;
 #ifdef CAPABILITIES
-	seq_write_end(&newfde->fde_seq);
+	seqc_write_end(&newfde->fde_seqc);
 #endif
 	td->td_retval[0] = new;
 
@@ -928,6 +932,7 @@ unlock:
 		FILEDESC_XUNLOCK(fdp);
 	}
 
+	filecaps_free_finish(oioctls);
 	return (error);
 }
 
@@ -1141,8 +1146,7 @@ fail:
  * This is common code for FIOGETOWN ioctl called by fcntl(fd, F_GETOWN, arg).
  */
 pid_t
-fgetown(sigiop)
-	struct sigio **sigiop;
+fgetown(struct sigio **sigiop)
 {
 	pid_t pgid;
 
@@ -1181,12 +1185,13 @@ closefp(struct filedesc *fdp, int fd, struct file *fp, struct thread *td,
 	 * knote_fdclose to prevent a race of the fd getting opened, a knote
 	 * added, and deleteing a knote for the new fd.
 	 */
-	knote_fdclose(td, fd);
+	if (__predict_false(!TAILQ_EMPTY(&fdp->fd_kqlist)))
+		knote_fdclose(td, fd);
 
 	/*
 	 * We need to notify mqueue if the object is of type mqueue.
 	 */
-	if (fp->f_type == DTYPE_MQUEUE)
+	if (__predict_false(fp->f_type == DTYPE_MQUEUE))
 		mq_fdclose(td, fd, fp);
 	FILEDESC_XUNLOCK(fdp);
 
@@ -1348,12 +1353,11 @@ int
 kern_fstat(struct thread *td, int fd, struct stat *sbp)
 {
 	struct file *fp;
-	cap_rights_t rights;
 	int error;
 
 	AUDIT_ARG_FD(fd);
 
-	error = fget(td, fd, cap_rights_init(&rights, CAP_FSTAT), &fp);
+	error = fget(td, fd, &cap_fstat_rights, &fp);
 	if (error != 0)
 		return (error);
 
@@ -1416,29 +1420,40 @@ struct fpathconf_args {
 int
 sys_fpathconf(struct thread *td, struct fpathconf_args *uap)
 {
-	struct file *fp;
-	struct vnode *vp;
-	cap_rights_t rights;
+	long value;
 	int error;
 
-	error = fget(td, uap->fd, cap_rights_init(&rights, CAP_FPATHCONF), &fp);
+	error = kern_fpathconf(td, uap->fd, uap->name, &value);
+	if (error == 0)
+		td->td_retval[0] = value;
+	return (error);
+}
+
+int
+kern_fpathconf(struct thread *td, int fd, int name, long *valuep)
+{
+	struct file *fp;
+	struct vnode *vp;
+	int error;
+
+	error = fget(td, fd, &cap_fpathconf_rights, &fp);
 	if (error != 0)
 		return (error);
 
-	if (uap->name == _PC_ASYNC_IO) {
-		td->td_retval[0] = _POSIX_ASYNCHRONOUS_IO;
+	if (name == _PC_ASYNC_IO) {
+		*valuep = _POSIX_ASYNCHRONOUS_IO;
 		goto out;
 	}
 	vp = fp->f_vnode;
 	if (vp != NULL) {
 		vn_lock(vp, LK_SHARED | LK_RETRY);
-		error = VOP_PATHCONF(vp, uap->name, td->td_retval);
+		error = VOP_PATHCONF(vp, name, valuep);
 		VOP_UNLOCK(vp, 0);
 	} else if (fp->f_type == DTYPE_PIPE || fp->f_type == DTYPE_SOCKET) {
-		if (uap->name != _PC_PIPE_BUF) {
+		if (name != _PC_PIPE_BUF) {
 			error = EINVAL;
 		} else {
-			td->td_retval[0] = PIPE_BUF;
+			*valuep = PIPE_BUF;
 			error = 0;
 		}
 	} else {
@@ -1450,17 +1465,6 @@ out:
 }
 
 /*
- * Initialize filecaps structure.
- */
-void
-filecaps_init(struct filecaps *fcaps)
-{
-
-	bzero(fcaps, sizeof(*fcaps));
-	fcaps->fc_nioctls = -1;
-}
-
-/*
  * Copy filecaps structure allocating memory for ioctls array if needed.
  *
  * The last parameter indicates whether the fdtable is locked. If it is not and
@@ -1469,24 +1473,58 @@ filecaps_init(struct filecaps *fcaps)
  * Note that if the table was not locked, the caller has to check the relevant
  * sequence counter to determine whether the operation was successful.
  */
-int
+bool
 filecaps_copy(const struct filecaps *src, struct filecaps *dst, bool locked)
 {
 	size_t size;
 
-	*dst = *src;
+	if (src->fc_ioctls != NULL && !locked)
+		return (false);
+	memcpy(dst, src, sizeof(*src));
 	if (src->fc_ioctls == NULL)
-		return (0);
-	if (!locked)
-		return (1);
+		return (true);
 
 	KASSERT(src->fc_nioctls > 0,
 	    ("fc_ioctls != NULL, but fc_nioctls=%hd", src->fc_nioctls));
 
 	size = sizeof(src->fc_ioctls[0]) * src->fc_nioctls;
 	dst->fc_ioctls = malloc(size, M_FILECAPS, M_WAITOK);
+	memcpy(dst->fc_ioctls, src->fc_ioctls, size);
+	return (true);
+}
+
+static u_long *
+filecaps_copy_prep(const struct filecaps *src)
+{
+	u_long *ioctls;
+	size_t size;
+
+	if (__predict_true(src->fc_ioctls == NULL))
+		return (NULL);
+
+	KASSERT(src->fc_nioctls > 0,
+	    ("fc_ioctls != NULL, but fc_nioctls=%hd", src->fc_nioctls));
+
+	size = sizeof(src->fc_ioctls[0]) * src->fc_nioctls;
+	ioctls = malloc(size, M_FILECAPS, M_WAITOK);
+	return (ioctls);
+}
+
+static void
+filecaps_copy_finish(const struct filecaps *src, struct filecaps *dst,
+    u_long *ioctls)
+{
+	size_t size;
+
+	*dst = *src;
+	if (__predict_true(src->fc_ioctls == NULL)) {
+		MPASS(ioctls == NULL);
+		return;
+	}
+
+	size = sizeof(src->fc_ioctls[0]) * src->fc_nioctls;
+	dst->fc_ioctls = ioctls;
 	bcopy(src->fc_ioctls, dst->fc_ioctls, size);
-	return (0);
 }
 
 /*
@@ -1522,6 +1560,23 @@ filecaps_free(struct filecaps *fcaps)
 
 	free(fcaps->fc_ioctls, M_FILECAPS);
 	bzero(fcaps, sizeof(*fcaps));
+}
+
+static u_long *
+filecaps_free_prep(struct filecaps *fcaps)
+{
+	u_long *ioctls;
+
+	ioctls = fcaps->fc_ioctls;
+	bzero(fcaps, sizeof(*fcaps));
+	return (ioctls);
+}
+
+static void
+filecaps_free_finish(u_long *ioctls)
+{
+
+	free(ioctls, M_FILECAPS);
 }
 
 /*
@@ -1683,10 +1738,8 @@ fdalloc(struct thread *td, int minfd, int *result)
 	if (fd >= fdp->fd_nfiles) {
 		allocfd = min(fd * 2, maxfd);
 #ifdef RACCT
-		if (racct_enable) {
-			PROC_LOCK(p);
-			error = racct_set(p, RACCT_NOFILE, allocfd);
-			PROC_UNLOCK(p);
+		if (RACCT_ENABLED()) {
+			error = racct_set_unlocked(p, RACCT_NOFILE, allocfd);
 			if (error != 0)
 				return (EMFILE);
 		}
@@ -1798,7 +1851,8 @@ falloc_noinstall(struct thread *td, struct file **resultfp)
 		}
 		return (ENFILE);
 	}
-	fp = uma_zalloc(file_zone, M_WAITOK | M_ZERO);
+	fp = uma_zalloc(file_zone, M_WAITOK);
+	bzero(fp, sizeof(*fp));
 	refcount_init(&fp->f_count, 1);
 	fp->f_cred = crhold(td->td_ucred);
 	fp->f_ops = &badfileops;
@@ -1822,7 +1876,7 @@ _finstall(struct filedesc *fdp, struct file *fp, int fd, int flags,
 
 	fde = &fdp->fd_ofiles[fd];
 #ifdef CAPABILITIES
-	seq_write_begin(&fde->fde_seq);
+	seqc_write_begin(&fde->fde_seqc);
 #endif
 	fde->fde_file = fp;
 	fde->fde_flags = (flags & O_CLOEXEC) != 0 ? UF_EXCLOSE : 0;
@@ -1831,7 +1885,7 @@ _finstall(struct filedesc *fdp, struct file *fp, int fd, int flags,
 	else
 		filecaps_fill(&fde->fde_caps);
 #ifdef CAPABILITIES
-	seq_write_end(&fde->fde_seq);
+	seqc_write_end(&fde->fde_seqc);
 #endif
 }
 
@@ -2197,11 +2251,8 @@ fdescfree(struct thread *td)
 	MPASS(fdp != NULL);
 
 #ifdef RACCT
-	if (racct_enable) {
-		PROC_LOCK(p);
-		racct_set(p, RACCT_NOFILE, 0);
-		PROC_UNLOCK(p);
-	}
+	if (RACCT_ENABLED())
+		racct_set_unlocked(p, RACCT_NOFILE, 0);
 #endif
 
 	if (p->p_fdtol != NULL)
@@ -2388,9 +2439,6 @@ fdcheckstd(struct thread *td)
  * Internal form of close.  Decrement reference count on file structure.
  * Note: td may be NULL when closing a file that was being passed in a
  * message.
- *
- * XXXRW: Giant is not required for the caller, but often will be held; this
- * makes it moderately likely the Giant will be recursed in the VFS case.
  */
 int
 closef(struct file *fp, struct thread *td)
@@ -2492,7 +2540,7 @@ fget_cap_locked(struct filedesc *fdp, int fd, cap_rights_t *needrightsp,
 	}
 
 #ifdef CAPABILITIES
-	error = cap_check(cap_rights_fde(fde), needrightsp);
+	error = cap_check(cap_rights_fde_inline(fde), needrightsp);
 	if (error != 0)
 		goto out;
 #endif
@@ -2519,7 +2567,7 @@ fget_cap(struct thread *td, int fd, cap_rights_t *needrightsp,
 		filecaps_fill(havecapsp);
 #else
 	struct file *fp;
-	seq_t seq;
+	seqc_t seq;
 
 	for (;;) {
 		error = fget_unlocked(fdp, fd, needrightsp, &fp, &seq);
@@ -2554,22 +2602,22 @@ get_locked:
 
 int
 fget_unlocked(struct filedesc *fdp, int fd, cap_rights_t *needrightsp,
-    struct file **fpp, seq_t *seqp)
+    struct file **fpp, seqc_t *seqp)
 {
 #ifdef CAPABILITIES
-	struct filedescent *fde;
+	const struct filedescent *fde;
 #endif
-	struct fdescenttbl *fdt;
+	const struct fdescenttbl *fdt;
 	struct file *fp;
 	u_int count;
 #ifdef CAPABILITIES
-	seq_t seq;
+	seqc_t seq;
 	cap_rights_t haverights;
 	int error;
 #endif
 
 	fdt = fdp->fd_files;
-	if ((u_int)fd >= fdt->fdt_nfiles)
+	if (__predict_false((u_int)fd >= fdt->fdt_nfiles))
 		return (EBADF);
 	/*
 	 * Fetch the descriptor locklessly.  We avoid fdrop() races by
@@ -2581,11 +2629,11 @@ fget_unlocked(struct filedesc *fdp, int fd, cap_rights_t *needrightsp,
 	 */
 	for (;;) {
 #ifdef CAPABILITIES
-		seq = seq_read(fd_seq(fdt, fd));
+		seq = seqc_read(fd_seqc(fdt, fd));
 		fde = &fdt->fdt_ofiles[fd];
-		haverights = *cap_rights_fde(fde);
+		haverights = *cap_rights_fde_inline(fde);
 		fp = fde->fde_file;
-		if (!seq_consistent(fd_seq(fdt, fd), seq))
+		if (!seqc_consistent(fd_seqc(fdt, fd), seq))
 			continue;
 #else
 		fp = fdt->fdt_ofiles[fd].fde_file;
@@ -2605,7 +2653,7 @@ fget_unlocked(struct filedesc *fdp, int fd, cap_rights_t *needrightsp,
 			 * table before this fd was closed, so it possible that
 			 * there is a stale fp pointer in cached version.
 			 */
-			fdt = *(struct fdescenttbl * volatile *)&(fdp->fd_files);
+			fdt = *(const struct fdescenttbl * const volatile *)&(fdp->fd_files);
 			continue;
 		}
 		/*
@@ -2616,7 +2664,7 @@ fget_unlocked(struct filedesc *fdp, int fd, cap_rights_t *needrightsp,
 			goto retry;
 		fdt = fdp->fd_files;
 #ifdef	CAPABILITIES
-		if (seq_consistent_nomb(fd_seq(fdt, fd), seq))
+		if (seqc_consistent_nomb(fd_seqc(fdt, fd), seq))
 #else
 		if (fp == fdt->fdt_ofiles[fd].fde_file)
 #endif
@@ -2647,7 +2695,7 @@ fget_unlocked(struct filedesc *fdp, int fd, cap_rights_t *needrightsp,
  */
 static __inline int
 _fget(struct thread *td, int fd, struct file **fpp, int flags,
-    cap_rights_t *needrightsp, seq_t *seqp)
+    cap_rights_t *needrightsp, seqc_t *seqp)
 {
 	struct filedesc *fdp;
 	struct file *fp;
@@ -2711,7 +2759,7 @@ fget_mmap(struct thread *td, int fd, cap_rights_t *rightsp, u_char *maxprotp,
 		*maxprotp = VM_PROT_ALL;
 #else
 	struct filedesc *fdp = td->td_proc->p_fd;
-	seq_t seq;
+	seqc_t seq;
 
 	MPASS(cap_rights_is_set(rightsp, CAP_MMAP));
 	for (;;) {
@@ -2754,7 +2802,7 @@ fget_fcntl(struct thread *td, int fd, cap_rights_t *rightsp, int needfcntl,
 	return (fget_unlocked(fdp, fd, rightsp, fpp, NULL));
 #else
 	int error;
-	seq_t seq;
+	seqc_t seq;
 
 	MPASS(cap_rights_is_set(rightsp, CAP_FCNTL));
 	for (;;) {
@@ -2868,8 +2916,11 @@ fgetvp_write(struct thread *td, int fd, cap_rights_t *rightsp,
 
 /*
  * Handle the last reference to a file being closed.
+ *
+ * Without the noinline attribute clang keeps inlining the func thorough this
+ * file when fdrop is used.
  */
-int
+int __noinline
 _fdrop(struct file *fp, struct thread *td)
 {
 	int error;
@@ -2904,10 +2955,9 @@ sys_flock(struct thread *td, struct flock_args *uap)
 	struct file *fp;
 	struct vnode *vp;
 	struct flock lf;
-	cap_rights_t rights;
 	int error;
 
-	error = fget(td, uap->fd, cap_rights_init(&rights, CAP_FLOCK), &fp);
+	error = fget(td, uap->fd, &cap_flock_rights, &fp);
 	if (error != 0)
 		return (error);
 	if (fp->f_type != DTYPE_VNODE) {
@@ -2949,6 +2999,7 @@ dupfdopen(struct thread *td, struct filedesc *fdp, int dfd, int mode,
 {
 	struct filedescent *newfde, *oldfde;
 	struct file *fp;
+	u_long *ioctls;
 	int error, indx;
 
 	KASSERT(openerror == ENODEV || openerror == ENXIO,
@@ -2993,13 +3044,15 @@ dupfdopen(struct thread *td, struct filedesc *fdp, int dfd, int mode,
 		fhold(fp);
 		newfde = &fdp->fd_ofiles[indx];
 		oldfde = &fdp->fd_ofiles[dfd];
+		ioctls = filecaps_copy_prep(&oldfde->fde_caps);
 #ifdef CAPABILITIES
-		seq_write_begin(&newfde->fde_seq);
+		seqc_write_begin(&newfde->fde_seqc);
 #endif
 		memcpy(newfde, oldfde, fde_change_size);
-		filecaps_copy(&oldfde->fde_caps, &newfde->fde_caps, true);
+		filecaps_copy_finish(&oldfde->fde_caps, &newfde->fde_caps,
+		    ioctls);
 #ifdef CAPABILITIES
-		seq_write_end(&newfde->fde_seq);
+		seqc_write_end(&newfde->fde_seqc);
 #endif
 		break;
 	case ENXIO:
@@ -3009,13 +3062,13 @@ dupfdopen(struct thread *td, struct filedesc *fdp, int dfd, int mode,
 		newfde = &fdp->fd_ofiles[indx];
 		oldfde = &fdp->fd_ofiles[dfd];
 #ifdef CAPABILITIES
-		seq_write_begin(&newfde->fde_seq);
+		seqc_write_begin(&newfde->fde_seqc);
 #endif
 		memcpy(newfde, oldfde, fde_change_size);
 		oldfde->fde_file = NULL;
 		fdunused(fdp, dfd);
 #ifdef CAPABILITIES
-		seq_write_end(&newfde->fde_seq);
+		seqc_write_end(&newfde->fde_seqc);
 #endif
 		break;
 	}
@@ -3293,10 +3346,10 @@ sysctl_kern_file(SYSCTL_HANDLER_ARGS)
 			if ((fp = fdp->fd_ofiles[n].fde_file) == NULL)
 				continue;
 			xf.xf_fd = n;
-			xf.xf_file = fp;
-			xf.xf_data = fp->f_data;
-			xf.xf_vnode = fp->f_vnode;
-			xf.xf_type = fp->f_type;
+			xf.xf_file = (uintptr_t)fp;
+			xf.xf_data = (uintptr_t)fp->f_data;
+			xf.xf_vnode = (uintptr_t)fp->f_vnode;
+			xf.xf_type = (uintptr_t)fp->f_type;
 			xf.xf_count = fp->f_count;
 			xf.xf_msgcount = 0;
 			xf.xf_offset = foffset_get(fp);
@@ -3552,7 +3605,7 @@ kern_proc_filedesc_out(struct proc *p,  struct sbuf *sb, ssize_t maxlen,
 #ifdef CAPABILITIES
 		rights = *cap_rights(fdp, i);
 #else /* !CAPABILITIES */
-		cap_rights_init(&rights);
+		rights = cap_no_rights;
 #endif
 		/*
 		 * Create sysctl entry.  It is OK to drop the filedesc

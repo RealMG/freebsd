@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1980, 1986, 1989, 1993
  *	The Regents of the University of California.  All rights reserved.
  * (c) UNIX System Laboratories, Inc.
@@ -43,6 +45,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/buf.h>
 #include <sys/kernel.h>
 #include <sys/limits.h>
 #include <sys/msgbuf.h>
@@ -283,6 +286,12 @@ init_param2(long physpages)
 	nbuf = NBUF;
 	TUNABLE_INT_FETCH("kern.nbuf", &nbuf);
 	TUNABLE_INT_FETCH("kern.bio_transient_maxcnt", &bio_transient_maxcnt);
+
+	/*
+	 * Physical buffers are pre-allocated buffers (struct buf) that
+	 * are used as temporary holders for I/O, such as paging I/O.
+	 */
+	TUNABLE_INT_FETCH("kern.nswbuf", &nswbuf);
 
 	/*
 	 * The default for maxpipekva is min(1/64 of the kernel address space,

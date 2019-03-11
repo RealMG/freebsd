@@ -179,6 +179,9 @@ there_is_another_patch(void)
 			say("done\n");
 		return false;
 	}
+	if (p_filesize == 0)
+		return false;
+	nonempty_patchf_seen = true;
 	if (verbose)
 		say("Hmm...");
 	diff_type = intuit_diff_type();
@@ -311,14 +314,16 @@ intuit_diff_type(void)
 			    &names[OLD_FILE].exists, strippath);
 		else if (strnEQ(s, "--- ", 4)) {
 			size_t off = 4;
-			if (piece_of_git && strippath == 957)
+			if (piece_of_git && strippath == 957 &&
+			    strnEQ(s, "--- a/", 6))
 				off = 6;
 			names[NEW_FILE].path = fetchname(s + off,
 			    &names[NEW_FILE].exists, strippath);
 		} else if (strnEQ(s, "+++ ", 4)) {
 			/* pretend it is the old name */
 			size_t off = 4;
-			if (piece_of_git && strippath == 957)
+			if (piece_of_git && strippath == 957 &&
+			    strnEQ(s, "+++ b/", 6))
 				off = 6;
 			names[OLD_FILE].path = fetchname(s + off,
 			    &names[OLD_FILE].exists, strippath);
@@ -1135,7 +1140,12 @@ hunk_done:
 			if (*buf != '>')
 				fatal("> expected at line %ld of patch\n",
 				    p_input_line);
-			p_line[i] = savestr(buf + 2);
+			/* Don't overrun if we don't have enough line */
+			if (len > 2)
+				p_line[i] = savestr(buf + 2);
+			else
+				p_line[i] = savestr("");
+
 			if (out_of_mem) {
 				p_end = i - 1;
 				return false;

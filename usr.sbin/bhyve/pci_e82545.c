@@ -1,4 +1,6 @@
 /*
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2016 Alexander Motin <mav@FreeBSD.org>
  * Copyright (c) 2015 Peter Grehan <grehan@freebsd.org>
  * Copyright (c) 2013 Jeremiah Lott, Avere Systems
@@ -41,6 +43,9 @@ __FBSDID("$FreeBSD$");
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 
+#ifndef WITHOUT_CAPSICUM
+#include <capsicum_helpers.h>
+#endif
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -342,8 +347,8 @@ struct e82545_softc {
 #define E82545_NVM_MODE_OPADDR  0x0
 #define E82545_NVM_MODE_DATAIN  0x1
 #define E82545_NVM_MODE_DATAOUT 0x2
-        /* EEPROM data */
-        uint16_t eeprom_data[E82545_NVM_EEPROM_SIZE];
+	/* EEPROM data */
+	uint16_t eeprom_data[E82545_NVM_EEPROM_SIZE];
 };
 
 static void e82545_reset(struct e82545_softc *sc, int dev);
@@ -1470,7 +1475,7 @@ e82545_rx_disable(struct e82545_softc *sc)
 static void
 e82545_write_ra(struct e82545_softc *sc, int reg, uint32_t wval)
 {
-        struct eth_uni *eu;
+	struct eth_uni *eu;
 	int idx;
 
 	idx = reg >> 1;
@@ -1496,7 +1501,7 @@ e82545_write_ra(struct e82545_softc *sc, int reg, uint32_t wval)
 static uint32_t
 e82545_read_ra(struct e82545_softc *sc, int reg)
 {
-        struct eth_uni *eu;
+	struct eth_uni *eu;
 	uint32_t retval;
 	int idx;
 
@@ -1740,12 +1745,12 @@ e82545_read_register(struct e82545_softc *sc, uint32_t offset)
 {
 	uint32_t retval;
 	int ridx;
-	
+
 	if (offset & 0x3) {
 		DPRINTF("Unaligned register read offset:0x%x\r\n", offset);
 		return 0;
 	}
-		
+
 	DPRINTF("Register read: 0x%x\r\n", offset);
 
 	switch (offset) {
@@ -2222,7 +2227,7 @@ e82545_open_tap(struct e82545_softc *sc, char *opts)
 	sc->esc_tapfd = open(tbuf, O_RDWR);
 	if (sc->esc_tapfd == -1) {
 		DPRINTF("unable to open tap device %s\n", opts);
-		exit(1);
+		exit(4);
 	}
 
 	/*
@@ -2238,7 +2243,7 @@ e82545_open_tap(struct e82545_softc *sc, char *opts)
 
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_init(&rights, CAP_EVENT, CAP_READ, CAP_WRITE);
-	if (cap_rights_limit(sc->esc_tapfd, &rights) == -1 && errno != ENOSYS)
+	if (caph_rights_limit(sc->esc_tapfd, &rights) == -1)
 		errx(EX_OSERR, "Unable to apply rights for sandbox");
 #endif
 	

@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1993
  *	The Regents of the University of California.  All rights reserved.
  * Modifications/enhancements:
@@ -61,7 +63,9 @@ SYSCTL_INT(_debug, OID_AUTO, rcluster, CTLFLAG_RW, &rcluster, 0,
 #endif
 
 static MALLOC_DEFINE(M_SEGMENT, "cl_savebuf", "cluster_save buffer");
+static uma_zone_t cluster_pbuf_zone;
 
+static void cluster_init(void *);
 static struct cluster_save *cluster_collectbufs(struct vnode *vp,
 	    struct buf *last_bp, int gbflags);
 static struct buf *cluster_rbuild(struct vnode *vp, u_quad_t filesize,
@@ -81,6 +85,15 @@ static int read_min = 1;
 SYSCTL_INT(_vfs, OID_AUTO, read_min, CTLFLAG_RW, &read_min, 0,
     "Cluster read min block count");
 
+SYSINIT(cluster, SI_SUB_CPU, SI_ORDER_ANY, cluster_init, NULL);
+
+static void
+cluster_init(void *dummy)
+{
+
+	cluster_pbuf_zone = pbuf_zsecond_create("clpbuf", nswbuf / 2);
+}
+
 /*
  * Read data to a buf, including read-ahead if we find this to be beneficial.
  * cluster_read replaces bread.
@@ -92,12 +105,14 @@ cluster_read(struct vnode *vp, u_quad_t filesize, daddr_t lblkno, long size,
 {
 	struct buf *bp, *rbp, *reqbp;
 	struct bufobj *bo;
+	struct thread *td;
 	daddr_t blkno, origblkno;
 	int maxra, racluster;
 	int error, ncontig;
 	int i;
 
 	error = 0;
+	td = curthread;
 	bo = &vp->v_bufobj;
 	if (!unmapped_buf_allowed)
 		gbflags &= ~GB_UNMAPPED;
@@ -116,10 +131,14 @@ cluster_read(struct vnode *vp, u_quad_t filesize, daddr_t lblkno, long size,
 	/*
 	 * get the requested block
 	 */
-	*bpp = reqbp = bp = getblk(vp, lblkno, size, 0, 0, gbflags);
-	if (bp == NULL)
-		return (EBUSY);
+	error = getblkx(vp, lblkno, size, 0, 0, gbflags, &bp);
+	if (error != 0) {
+		*bpp = NULL;
+		return (error);
+	}
+	gbflags &= ~GB_NOSPARSE;
 	origblkno = lblkno;
+	*bpp = reqbp = bp;
 
 	/*
 	 * if it is in the cache, then check to see if the reads have been
@@ -241,12 +260,12 @@ cluster_read(struct vnode *vp, u_quad_t filesize, daddr_t lblkno, long size,
 		bstrategy(bp);
 #ifdef RACCT
 		if (racct_enable) {
-			PROC_LOCK(curproc);
-			racct_add_buf(curproc, bp, 0);
-			PROC_UNLOCK(curproc);
+			PROC_LOCK(td->td_proc);
+			racct_add_buf(td->td_proc, bp, 0);
+			PROC_UNLOCK(td->td_proc);
 		}
 #endif /* RACCT */
-		curthread->td_ru.ru_inblock++;
+		td->td_ru.ru_inblock++;
 	}
 
 	/*
@@ -301,12 +320,12 @@ cluster_read(struct vnode *vp, u_quad_t filesize, daddr_t lblkno, long size,
 		bstrategy(rbp);
 #ifdef RACCT
 		if (racct_enable) {
-			PROC_LOCK(curproc);
-			racct_add_buf(curproc, rbp, 0);
-			PROC_UNLOCK(curproc);
+			PROC_LOCK(td->td_proc);
+			racct_add_buf(td->td_proc, rbp, 0);
+			PROC_UNLOCK(td->td_proc);
 		}
 #endif /* RACCT */
-		curthread->td_ru.ru_inblock++;
+		td->td_ru.ru_inblock++;
 	}
 
 	if (reqbp) {
@@ -364,7 +383,7 @@ cluster_rbuild(struct vnode *vp, u_quad_t filesize, daddr_t lbn,
 		((tbp->b_flags & B_VMIO) == 0) || (run <= 1) )
 		return tbp;
 
-	bp = trypbuf(&cluster_pbuf_freecnt);
+	bp = uma_zalloc(cluster_pbuf_zone, M_NOWAIT);
 	if (bp == NULL)
 		return tbp;
 
@@ -553,8 +572,7 @@ clean_sbusy:
  * that we will need to shift around.
  */
 static void
-cluster_callback(bp)
-	struct buf *bp;
+cluster_callback(struct buf *bp)
 {
 	struct buf *nbp, *tbp;
 	int error = 0;
@@ -596,7 +614,7 @@ cluster_callback(bp)
 		bufdone(tbp);
 	}
 	pbrelvp(bp);
-	relpbuf(bp, &cluster_pbuf_freecnt);
+	uma_zfree(cluster_pbuf_zone, bp);
 }
 
 /*
@@ -849,9 +867,8 @@ cluster_wbuild(struct vnode *vp, long size, daddr_t start_lbn, int len,
 		  (tbp->b_bcount != tbp->b_bufsize) ||
 		  (tbp->b_bcount != size) ||
 		  (len == 1) ||
-		  ((bp = (vp->v_vflag & VV_MD) != 0 ?
-		  trypbuf(&cluster_pbuf_freecnt) :
-		  getpbuf(&cluster_pbuf_freecnt)) == NULL)) {
+		  ((bp = uma_zalloc(cluster_pbuf_zone,
+		  (vp->v_vflag & VV_MD) != 0 ? M_NOWAIT : M_WAITOK)) == NULL)) {
 			totalwritten += tbp->b_bufsize;
 			bawrite(tbp);
 			++start_lbn;

@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1992, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -99,8 +101,7 @@ __FBSDID("$FreeBSD$");
 static quad_t __lmulq(u_long, u_long);
 
 quad_t
-__muldi3(a, b)
-	quad_t a, b;
+__muldi3(quad_t a, quad_t b)
 {
 	union uu u, v, low, prod;
 	u_long high, mid, udiff, vdiff;

@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1992, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -43,8 +45,7 @@ __FBSDID("$FreeBSD$");
  * Return -a (or, equivalently, 0 - a), in quad.  See subdi3.c.
  */
 quad_t
-__negdi2(a)
-	quad_t a;
+__negdi2(quad_t a)
 {
 	union uu aa, res;
 

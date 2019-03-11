@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1982, 1986, 1989, 1993
  *	The Regents of the University of California.  All rights reserved.
  * (c) UNIX System Laboratories, Inc.
@@ -38,7 +40,7 @@
 #ifndef _SYS_ERRNO_H_
 #define _SYS_ERRNO_H_
 
-#ifndef _KERNEL
+#if !defined(_KERNEL) && !defined(_STANDALONE)
 #include <sys/cdefs.h>
 __BEGIN_DECLS
 int *	__error(void);
@@ -178,10 +180,11 @@ __END_DECLS
 #define	ECAPMODE	94		/* Not permitted in capability mode */
 #define	ENOTRECOVERABLE	95		/* State not recoverable */
 #define	EOWNERDEAD	96		/* Previous owner died */
+#define	EINTEGRITY	97		/* Integrity check failed */
 #endif /* _POSIX_SOURCE */
 
 #ifndef _POSIX_SOURCE
-#define	ELAST		96		/* Must be equal largest errno */
+#define	ELAST		97		/* Must be equal largest errno */
 #endif /* _POSIX_SOURCE */
 
 #if defined(_KERNEL) || defined(_WANT_KERNEL_ERRNO)

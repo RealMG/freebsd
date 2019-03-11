@@ -34,12 +34,13 @@
 #include "sanitizer_common/sanitizer_libignore.h"
 #include "sanitizer_common/sanitizer_suppressions.h"
 #include "sanitizer_common/sanitizer_thread_registry.h"
+#include "sanitizer_common/sanitizer_vector.h"
 #include "tsan_clock.h"
 #include "tsan_defs.h"
 #include "tsan_flags.h"
+#include "tsan_mman.h"
 #include "tsan_sync.h"
 #include "tsan_trace.h"
-#include "tsan_vector.h"
 #include "tsan_report.h"
 #include "tsan_platform.h"
 #include "tsan_mutexset.h"
@@ -58,15 +59,16 @@ struct MapUnmapCallback;
 static const uptr kAllocatorRegionSizeLog = 20;
 static const uptr kAllocatorNumRegions =
     SANITIZER_MMAP_RANGE_SIZE >> kAllocatorRegionSizeLog;
-typedef TwoLevelByteMap<(kAllocatorNumRegions >> 12), 1 << 12,
-    MapUnmapCallback> ByteMap;
+using ByteMap = TwoLevelByteMap<(kAllocatorNumRegions >> 12), 1 << 12,
+                                LocalAddressSpaceView, MapUnmapCallback>;
 struct AP32 {
   static const uptr kSpaceBeg = 0;
   static const u64 kSpaceSize = SANITIZER_MMAP_RANGE_SIZE;
   static const uptr kMetadataSize = 0;
   typedef __sanitizer::CompactSizeClassMap SizeClassMap;
   static const uptr kRegionSizeLog = kAllocatorRegionSizeLog;
-  typedef __tsan::ByteMap ByteMap;
+  using AddressSpaceView = LocalAddressSpaceView;
+  using ByteMap = __tsan::ByteMap;
   typedef __tsan::MapUnmapCallback MapUnmapCallback;
   static const uptr kFlags = 0;
 };
@@ -79,6 +81,7 @@ struct AP64 {  // Allocator64 parameters. Deliberately using a short name.
   typedef DefaultSizeClassMap SizeClassMap;
   typedef __tsan::MapUnmapCallback MapUnmapCallback;
   static const uptr kFlags = 0;
+  using AddressSpaceView = LocalAddressSpaceView;
 };
 typedef SizeClassAllocator64<AP64> PrimaryAllocator;
 #endif
@@ -519,7 +522,9 @@ struct Context {
   Context();
 
   bool initialized;
+#if !SANITIZER_GO
   bool after_multithreaded_fork;
+#endif
 
   MetaMap metamap;
 
@@ -574,11 +579,8 @@ const char *GetObjectTypeFromTag(uptr tag);
 const char *GetReportHeaderFromTag(uptr tag);
 uptr TagFromShadowStackFrame(uptr pc);
 
-class ScopedReport {
+class ScopedReportBase {
  public:
-  explicit ScopedReport(ReportType typ, uptr tag = kExternalTagNone);
-  ~ScopedReport();
-
   void AddMemoryAccess(uptr addr, uptr external_tag, Shadow s, StackTrace stack,
                        const MutexSet *mset);
   void AddStack(StackTrace stack, bool suppressable = false);
@@ -593,6 +595,10 @@ class ScopedReport {
 
   const ReportDesc *GetReport() const;
 
+ protected:
+  ScopedReportBase(ReportType typ, uptr tag);
+  ~ScopedReportBase();
+
  private:
   ReportDesc *rep_;
   // Symbolizer makes lots of intercepted calls. If we try to process them,
@@ -601,8 +607,17 @@ class ScopedReport {
 
   void AddDeadMutex(u64 id);
 
-  ScopedReport(const ScopedReport&);
-  void operator = (const ScopedReport&);
+  ScopedReportBase(const ScopedReportBase &) = delete;
+  void operator=(const ScopedReportBase &) = delete;
+};
+
+class ScopedReport : public ScopedReportBase {
+ public:
+  explicit ScopedReport(ReportType typ, uptr tag = kExternalTagNone);
+  ~ScopedReport();
+
+ private:
+  ScopedErrorReportLock lock_;
 };
 
 ThreadContext *IsThreadStackOrTls(uptr addr, bool *is_stack);
@@ -637,6 +652,10 @@ void ObtainCurrentStack(ThreadState *thr, uptr toppc, StackTraceTy *stack,
   ExtractTagFromStack(stack, tag);
 }
 
+#define GET_STACK_TRACE_FATAL(thr, pc) \
+  VarSizeStackTrace stack; \
+  ObtainCurrentStack(thr, pc, &stack); \
+  stack.ReverseOrder();
 
 #if TSAN_COLLECT_STATS
 void StatAggregate(u64 *dst, u64 *src);
@@ -690,6 +709,7 @@ void PrintCurrentStack(ThreadState *thr, uptr pc);
 void PrintCurrentStackSlow(uptr pc);  // uses libunwind
 
 void Initialize(ThreadState *thr);
+void MaybeSpawnBackgroundThread();
 int Finalize(ThreadState *thr);
 
 void OnUserAlloc(ThreadState *thr, uptr pc, uptr p, uptr sz, bool write);
@@ -754,6 +774,7 @@ void ThreadFinalize(ThreadState *thr);
 void ThreadSetName(ThreadState *thr, const char *name);
 int ThreadCount(ThreadState *thr);
 void ProcessPendingSignals(ThreadState *thr);
+void ThreadNotJoined(ThreadState *thr, uptr pc, int tid, uptr uid);
 
 Processor *ProcCreate();
 void ProcDestroy(Processor *proc);
@@ -825,7 +846,7 @@ void ALWAYS_INLINE TraceAddEvent(ThreadState *thr, FastState fs,
     return;
   DCHECK_GE((int)typ, 0);
   DCHECK_LE((int)typ, 7);
-  DCHECK_EQ(GetLsb(addr, 61), addr);
+  DCHECK_EQ(GetLsb(addr, kEventPCBits), addr);
   StatInc(thr, StatEvents);
   u64 pos = fs.GetTracePos();
   if (UNLIKELY((pos % kTracePartSize) == 0)) {
@@ -837,7 +858,7 @@ void ALWAYS_INLINE TraceAddEvent(ThreadState *thr, FastState fs,
   }
   Event *trace = (Event*)GetThreadTrace(fs.tid());
   Event *evp = &trace[pos];
-  Event ev = (u64)addr | ((u64)typ << 61);
+  Event ev = (u64)addr | ((u64)typ << kEventPCBits);
   *evp = ev;
 }
 

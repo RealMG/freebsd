@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (C) 1996
  *	David L. Nugent.  All rights reserved.
  *
@@ -198,18 +200,18 @@ passwd_val(char const * str, int dflt)
 
 		for (i = 0; booltrue[i]; i++)
 			if (strcmp(str, booltrue[i]) == 0)
-				return 1;
+				return P_YES;
 		for (i = 0; boolfalse[i]; i++)
 			if (strcmp(str, boolfalse[i]) == 0)
-				return 0;
+				return P_NO;
 
 		/*
 		 * Special cases for defaultpassword
 		 */
 		if (strcmp(str, "random") == 0)
-			return -1;
+			return P_RANDOM;
 		if (strcmp(str, "none") == 0)
-			return -2;
+			return P_NONE;
 
 		errx(1, "Invalid value for default password");
 	}
@@ -219,12 +221,14 @@ passwd_val(char const * str, int dflt)
 char const     *
 boolean_str(int val)
 {
-	if (val == -1)
-		return "random";
-	else if (val == -2)
-		return "none";
+	if (val == P_NO)
+		return (boolfalse[0]);
+	else if (val == P_RANDOM)
+		return ("random");
+	else if (val == P_NONE)
+		return ("none");
 	else
-		return val ? booltrue[0] : boolfalse[0];
+		return (booltrue[0]);
 }
 
 char           *
@@ -252,9 +256,6 @@ read_userconfig(char const * file)
 
 	buf = NULL;
 	linecap = 0;
-
-	if (file == NULL)
-		file = _PATH_PW_CONF;
 
 	if ((fp = fopen(file, "r")) == NULL)
 		return (&config);
@@ -415,9 +416,13 @@ write_userconfig(struct userconf *cnf, const char *file)
 	int             i, j;
 	struct sbuf	*buf;
 	FILE           *fp;
+	char		cfgfile[MAXPATHLEN];
 
-	if (file == NULL)
-		file = _PATH_PW_CONF;
+	if (file == NULL) {
+		snprintf(cfgfile, sizeof(cfgfile), "%s/" _PW_CONF,
+		    conf.etcpath);
+		file = cfgfile;
+	}
 
 	if ((fd = open(file, O_CREAT|O_RDWR|O_TRUNC|O_EXLOCK, 0644)) == -1)
 		return (0);

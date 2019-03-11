@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -336,6 +338,12 @@ doformat(struct output *dest, const char *f, va_list ap)
 		vfprintf(fp, f, ap);
 		fclose(fp);
 	}
+}
+
+FILE *
+out1fp(void)
+{
+	return fwopen(out1, doformat_wr);
 }
 
 /*

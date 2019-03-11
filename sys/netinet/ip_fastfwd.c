@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 2003 Andre Oppermann, Internet Business Solutions AG
  * All rights reserved.
  *
@@ -88,11 +90,11 @@ __FBSDID("$FreeBSD$");
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 
-#include <net/pfil.h>
 #include <net/if.h>
 #include <net/if_types.h>
 #include <net/if_var.h>
 #include <net/if_dl.h>
+#include <net/pfil.h>
 #include <net/route.h>
 #include <net/vnet.h>
 
@@ -151,7 +153,7 @@ ip_tryforward(struct mbuf *m)
 	struct mbuf *m0 = NULL;
 	struct nhop4_basic nh;
 	struct sockaddr_in dst;
-	struct in_addr odest, dest;
+	struct in_addr dest, odest, rtdest;
 	uint16_t ip_len, ip_off;
 	int error = 0;
 	struct m_tag *fwd_tag = NULL;
@@ -226,12 +228,11 @@ ip_tryforward(struct mbuf *m)
 	/*
 	 * Run through list of ipfilter hooks for input packets
 	 */
-	if (!PFIL_HOOKED(&V_inet_pfil_hook))
+	if (!PFIL_HOOKED_IN(V_inet_pfil_head))
 		goto passin;
 
-	if (pfil_run_hooks(
-	    &V_inet_pfil_hook, &m, m->m_pkthdr.rcvif, PFIL_IN, NULL) ||
-	    m == NULL)
+	if (pfil_run_hooks(V_inet_pfil_head, &m, m->m_pkthdr.rcvif, PFIL_IN,
+	    NULL) != PFIL_PASS)
 		goto drop;
 
 	M_ASSERTVALID(m);
@@ -292,21 +293,39 @@ passin:
 #endif
 
 	/*
+	 * Next hop forced by pfil(9) hook?
+	 */
+	if ((m->m_flags & M_IP_NEXTHOP) &&
+	    ((fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL)) != NULL)) {
+		/*
+		 * Now we will find route to forced destination.
+		 */
+		dest.s_addr = ((struct sockaddr_in *)
+			    (fwd_tag + 1))->sin_addr.s_addr;
+		m_tag_delete(m, fwd_tag);
+		m->m_flags &= ~M_IP_NEXTHOP;
+	}
+
+	/*
 	 * Find route to destination.
 	 */
 	if (ip_findroute(&nh, dest, m) != 0)
 		return (NULL);	/* icmp unreach already sent */
 
 	/*
+	 * Avoid second route lookup by caching destination.
+	 */
+	rtdest.s_addr = dest.s_addr;
+
+	/*
 	 * Step 5: outgoing firewall packet processing
 	 */
-	if (!PFIL_HOOKED(&V_inet_pfil_hook))
+	if (!PFIL_HOOKED_OUT(V_inet_pfil_head))
 		goto passout;
 
-	if (pfil_run_hooks(&V_inet_pfil_hook, &m, nh.nh_ifp, PFIL_OUT, NULL) ||
-	    m == NULL) {
+	if (pfil_run_hooks(V_inet_pfil_head, &m, nh.nh_ifp,
+	    PFIL_OUT | PFIL_FWD, NULL) != PFIL_PASS)
 		goto drop;
-	}
 
 	M_ASSERTVALID(m);
 	M_ASSERTPKTHDR(m);
@@ -319,6 +338,8 @@ passin:
 	 */
 	if (m->m_flags & M_IP_NEXTHOP)
 		fwd_tag = m_tag_find(m, PACKET_TAG_IPFORWARD, NULL);
+	else
+		fwd_tag = NULL;
 	if (odest.s_addr != dest.s_addr || fwd_tag != NULL) {
 		/*
 		 * Is it now for a local address on this host?
@@ -340,7 +361,8 @@ forwardlocal:
 			m_tag_delete(m, fwd_tag);
 			m->m_flags &= ~M_IP_NEXTHOP;
 		}
-		if (ip_findroute(&nh, dest, m) != 0)
+		if (dest.s_addr != rtdest.s_addr &&
+		    ip_findroute(&nh, dest, m) != 0)
 			return (NULL);	/* icmp unreach already sent */
 	}
 

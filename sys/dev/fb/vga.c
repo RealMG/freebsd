@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1999 Kazutaka YOKOTA <yokota@zodiac.mech.utsunomiya-u.ac.jp>
  * Copyright (c) 1992-1998 Søren Schmidt
  * All rights reserved.
@@ -145,7 +147,7 @@ vga_ioctl(struct cdev *dev, vga_softc_t *sc, u_long cmd, caddr_t arg, int flag,
 
 int
 vga_mmap(struct cdev *dev, vga_softc_t *sc, vm_ooffset_t offset,
-    vm_offset_t *paddr, int prot, vm_memattr_t *memattr)
+    vm_paddr_t *paddr, int prot, vm_memattr_t *memattr)
 {
 	return genfbmmap(&sc->gensc, sc->adp, offset, paddr, prot, memattr);
 }

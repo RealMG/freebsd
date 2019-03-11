@@ -1,4 +1,4 @@
-//===--- ArgumentsAdjusters.cpp - Command line arguments adjuster ---------===//
+//===- ArgumentsAdjusters.cpp - Command line arguments adjuster -----------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -13,6 +13,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Tooling/ArgumentsAdjusters.h"
+#include "clang/Basic/LLVM.h"
+#include "llvm/ADT/StringRef.h"
+#include <cstddef>
 
 namespace clang {
 namespace tooling {
@@ -21,7 +24,7 @@ namespace tooling {
 ArgumentsAdjuster getClangSyntaxOnlyAdjuster() {
   return [](const CommandLineArguments &Args, StringRef /*unused*/) {
     CommandLineArguments AdjustedArgs;
-    for (size_t i = 0, e = Args.size(); i != e; ++i) {
+    for (size_t i = 0, e = Args.size(); i < e; ++i) {
       StringRef Arg = Args[i];
       // FIXME: Remove options that generate output.
       if (!Arg.startswith("-fcolor-diagnostics") &&
@@ -58,14 +61,14 @@ ArgumentsAdjuster getClangStripDependencyFileAdjuster() {
       StringRef Arg = Args[i];
       // All dependency-file options begin with -M. These include -MM,
       // -MF, -MG, -MP, -MT, -MQ, -MD, and -MMD.
-      if (!Arg.startswith("-M"))
+      if (!Arg.startswith("-M")) {
         AdjustedArgs.push_back(Args[i]);
-
-      if ((Arg == "-MF") || (Arg == "-MT") || (Arg == "-MQ") ||
-          (Arg == "-MD") || (Arg == "-MMD")) {
-        // Output is specified as -MX foo. Skip the next argument also.
-        ++i;
+        continue;
       }
+
+      if (Arg == "-MF" || Arg == "-MT" || Arg == "-MQ")
+        // These flags take an argument: -MX foo. Skip the next argument also.
+        ++i;
     }
     return AdjustedArgs;
   };
@@ -96,8 +99,34 @@ ArgumentsAdjuster getInsertArgumentAdjuster(const char *Extra,
 
 ArgumentsAdjuster combineAdjusters(ArgumentsAdjuster First,
                                    ArgumentsAdjuster Second) {
+  if (!First)
+    return Second;
+  if (!Second)
+    return First;
   return [First, Second](const CommandLineArguments &Args, StringRef File) {
     return Second(First(Args, File), File);
+  };
+}
+
+ArgumentsAdjuster getStripPluginsAdjuster() {
+  return [](const CommandLineArguments &Args, StringRef /*unused*/) {
+    CommandLineArguments AdjustedArgs;
+    for (size_t I = 0, E = Args.size(); I != E; I++) {
+      // According to https://clang.llvm.org/docs/ClangPlugins.html
+      // plugin arguments are in the form:
+      // -Xclang {-load, -plugin, -plugin-arg-<plugin-name>, -add-plugin}
+      // -Xclang <arbitrary-argument>
+      if (I + 4 < E && Args[I] == "-Xclang" &&
+          (Args[I + 1] == "-load" || Args[I + 1] == "-plugin" ||
+           llvm::StringRef(Args[I + 1]).startswith("-plugin-arg-") ||
+           Args[I + 1] == "-add-plugin") &&
+          Args[I + 2] == "-Xclang") {
+        I += 3;
+        continue;
+      }
+      AdjustedArgs.push_back(Args[I]);
+    }
+    return AdjustedArgs;
   };
 }
 

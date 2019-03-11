@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2009-2013 The FreeBSD Foundation
  * Copyright (c) 2013-2015 Mariusz Zaborski <oshogbo@FreeBSD.org>
  * All rights reserved.
@@ -142,6 +144,28 @@ nvpair_allocv(const char *name, int type, uint64_t data, size_t datasize,
 	return (nvp);
 }
 
+static int
+nvpair_append(nvpair_t *nvp, const void *value, size_t valsize, size_t datasize)
+{
+	void *olddata, *data, *valp;
+	size_t oldlen;
+
+	oldlen = nvp->nvp_nitems * valsize;
+	olddata = (void *)(uintptr_t)nvp->nvp_data;
+	data = nv_realloc(olddata, oldlen + valsize);
+	if (data == NULL) {
+		ERRNO_SET(ENOMEM);
+		return (-1);
+	}
+	valp = (unsigned char *)data + oldlen;
+	memcpy(valp, value, valsize);
+
+	nvp->nvp_data = (uint64_t)(uintptr_t)data;
+	nvp->nvp_datasize += datasize;
+	nvp->nvp_nitems++;
+	return (0);
+}
+
 nvlist_t *
 nvpair_nvlist(const nvpair_t *nvp)
 {
@@ -204,8 +228,10 @@ nvpair_remove_nvlist_array(nvpair_t *nvp)
 	/* XXX: DECONST is bad, mkay? */
 	nvlarray = __DECONST(nvlist_t **,
 	    nvpair_get_nvlist_array(nvp, &count));
-	for (i = 0; i < count; i++)
+	for (i = 0; i < count; i++) {
 		nvlist_set_array_next(nvlarray[i], NULL);
+		nvlist_set_parent(nvlarray[i], NULL);
+	}
 }
 
 void
@@ -1167,8 +1193,7 @@ nvpair_create_stringv(const char *name, const char *valuefmt, va_list valueap)
 	if (len < 0)
 		return (NULL);
 	nvp = nvpair_create_string(name, str);
-	if (nvp == NULL)
-		nv_free(str);
+	nv_free(str);
 	return (nvp);
 }
 
@@ -1249,11 +1274,6 @@ nvpair_t *
 nvpair_create_descriptor(const char *name, int value)
 {
 	nvpair_t *nvp;
-
-	if (value < 0 || !fd_is_valid(value)) {
-		ERRNO_SET(EBADF);
-		return (NULL);
-	}
 
 	value = fcntl(value, F_DUPFD_CLOEXEC, 0);
 	if (value < 0)
@@ -1491,11 +1511,6 @@ nvpair_create_descriptor_array(const char *name, const int *value,
 		if (value[ii] == -1) {
 			fds[ii] = -1;
 		} else {
-			if (!fd_is_valid(value[ii])) {
-				ERRNO_SET(EBADF);
-				goto fail;
-			}
-
 			fds[ii] = fcntl(value[ii], F_DUPFD_CLOEXEC, 0);
 			if (fds[ii] == -1)
 				goto fail;
@@ -1909,6 +1924,118 @@ nvpair_get_descriptor_array(const nvpair_t *nvp, size_t *nitems)
 }
 #endif
 
+int
+nvpair_append_bool_array(nvpair_t *nvp, const bool value)
+{
+
+	NVPAIR_ASSERT(nvp);
+	PJDLOG_ASSERT(nvp->nvp_type == NV_TYPE_BOOL_ARRAY);
+	return (nvpair_append(nvp, &value, sizeof(value), sizeof(value)));
+}
+
+int
+nvpair_append_number_array(nvpair_t *nvp, const uint64_t value)
+{
+
+	NVPAIR_ASSERT(nvp);
+	PJDLOG_ASSERT(nvp->nvp_type == NV_TYPE_NUMBER_ARRAY);
+	return (nvpair_append(nvp, &value, sizeof(value), sizeof(value)));
+}
+
+int
+nvpair_append_string_array(nvpair_t *nvp, const char *value)
+{
+	char *str;
+
+	NVPAIR_ASSERT(nvp);
+	PJDLOG_ASSERT(nvp->nvp_type == NV_TYPE_STRING_ARRAY);
+	if (value == NULL) {
+		ERRNO_SET(EINVAL);
+		return (-1);
+	}
+	str = nv_strdup(value);
+	if (str == NULL) {
+		return (-1);
+	}
+	if (nvpair_append(nvp, &str, sizeof(str), strlen(str) + 1) == -1) {
+		nv_free(str);
+		return (-1);
+	}
+	return (0);
+}
+
+int
+nvpair_append_nvlist_array(nvpair_t *nvp, const nvlist_t *value)
+{
+	nvpair_t *tmpnvp;
+	nvlist_t *nvl, *prev;
+	int flags;
+
+	NVPAIR_ASSERT(nvp);
+	PJDLOG_ASSERT(nvp->nvp_type == NV_TYPE_NVLIST_ARRAY);
+	if (value == NULL || nvlist_error(value) != 0 ||
+	    nvlist_get_pararr(value, NULL) != NULL) {
+		ERRNO_SET(EINVAL);
+		return (-1);
+	}
+	nvl = nvlist_clone(value);
+	if (nvl == NULL) {
+		return (-1);
+	}
+	flags = nvlist_flags(nvl) | NV_FLAG_IN_ARRAY;
+	nvlist_set_flags(nvl, flags);
+
+	tmpnvp = NULL;
+	prev = NULL;
+	if (nvp->nvp_nitems > 0) {
+		nvlist_t **nvls = (void *)(uintptr_t)nvp->nvp_data;
+
+		prev = nvls[nvp->nvp_nitems - 1];
+		PJDLOG_ASSERT(prev != NULL);
+
+		tmpnvp = nvpair_allocv(" ", NV_TYPE_NVLIST,
+		    (uint64_t)(uintptr_t)nvl, 0, 0);
+		if (tmpnvp == NULL) {
+			goto fail;
+		}
+	}
+	if (nvpair_append(nvp, &nvl, sizeof(nvl), 0) == -1) {
+		goto fail;
+	}
+	if (tmpnvp) {
+		NVPAIR_ASSERT(tmpnvp);
+		nvlist_set_array_next(prev, tmpnvp);
+	}
+	nvlist_set_parent(nvl, nvp);
+	return (0);
+fail:
+	if (tmpnvp) {
+		nvpair_free(tmpnvp);
+	}
+	nvlist_destroy(nvl);
+	return (-1);
+}
+
+#ifndef _KERNEL
+int
+nvpair_append_descriptor_array(nvpair_t *nvp, const int value)
+{
+	int fd;
+
+	NVPAIR_ASSERT(nvp);
+	PJDLOG_ASSERT(nvp->nvp_type == NV_TYPE_DESCRIPTOR_ARRAY);
+	fd = fcntl(value, F_DUPFD_CLOEXEC, 0);
+	if (fd == -1) {
+		return (-1);
+	}
+	if (nvpair_append(nvp, &fd, sizeof(fd), sizeof(fd)) == -1) {
+		close(fd);
+		return (-1);
+	}
+	return (0);
+}
+#endif
+
 void
 nvpair_free(nvpair_t *nvp)
 {
@@ -1926,6 +2053,7 @@ nvpair_free(nvpair_t *nvp)
 	case NV_TYPE_DESCRIPTOR_ARRAY:
 		for (i = 0; i < nvp->nvp_nitems; i++)
 			close(((int *)(intptr_t)nvp->nvp_data)[i]);
+		nv_free((int *)(intptr_t)nvp->nvp_data);
 		break;
 #endif
 	case NV_TYPE_NVLIST:

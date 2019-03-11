@@ -58,7 +58,6 @@ __FBSDID("$FreeBSD$");
 static struct sysentvec elf64_freebsd_sysvec = {
 	.sv_size	= SYS_MAXSYSCALL,
 	.sv_table	= sysent,
-	.sv_mask	= 0,
 	.sv_errsize	= 0,
 	.sv_errtbl	= NULL,
 	.sv_transtrap	= NULL,
@@ -70,7 +69,6 @@ static struct sysentvec elf64_freebsd_sysvec = {
 	.sv_coredump	= __elfN(coredump),
 	.sv_imgact_try	= NULL,
 	.sv_minsigstksz	= MINSIGSTKSZ,
-	.sv_pagesize	= PAGE_SIZE,
 	.sv_minuser	= VM_MIN_ADDRESS,
 	.sv_maxuser	= VM_MAXUSER_ADDRESS,
 	.sv_usrstack	= USRSTACK,
@@ -80,7 +78,8 @@ static struct sysentvec elf64_freebsd_sysvec = {
 	.sv_setregs	= exec_setregs,
 	.sv_fixlimit	= NULL,
 	.sv_maxssiz	= NULL,
-	.sv_flags	= SV_SHP | SV_TIMEKEEP | SV_ABI_FREEBSD | SV_LP64,
+	.sv_flags	= SV_SHP | SV_TIMEKEEP | SV_ABI_FREEBSD | SV_LP64 |
+	    SV_ASLR,
 	.sv_set_syscall_retval = cpu_set_syscall_retval,
 	.sv_fetch_syscall_args = cpu_fetch_syscall_args,
 	.sv_syscallnames = syscallnames,
@@ -107,21 +106,6 @@ static Elf64_Brandinfo freebsd_brand_info = {
 SYSINIT(elf64, SI_SUB_EXEC, SI_ORDER_FIRST,
     (sysinit_cfunc_t)elf64_insert_brand_entry, &freebsd_brand_info);
 
-static Elf64_Brandinfo freebsd_brand_oinfo = {
-	.brand		= ELFOSABI_FREEBSD,
-	.machine	= EM_AARCH64,
-	.compat_3_brand	= "FreeBSD",
-	.emul_path	= NULL,
-	.interp_path	= "/usr/libexec/ld-elf.so.1",
-	.sysvec		= &elf64_freebsd_sysvec,
-	.interp_newpath	= NULL,
-	.brand_note	= &elf64_freebsd_brandnote,
-	.flags		= BI_CAN_EXEC_DYN | BI_BRAND_NOTE
-};
-
-SYSINIT(oelf64, SI_SUB_EXEC, SI_ORDER_ANY,
-    (sysinit_cfunc_t)elf64_insert_brand_entry, &freebsd_brand_oinfo);
-
 void
 elf64_dump_thread(struct thread *td __unused, void *dst __unused,
     size_t *off __unused)
@@ -129,11 +113,18 @@ elf64_dump_thread(struct thread *td __unused, void *dst __unused,
 
 }
 
+bool
+elf_is_ifunc_reloc(Elf_Size r_info __unused)
+{
+
+	return (ELF_R_TYPE(r_info) == R_AARCH64_IRELATIVE);
+}
+
 static int
 elf_reloc_internal(linker_file_t lf, Elf_Addr relocbase, const void *data,
     int type, int local, elf_lookup_fn lookup)
 {
-	Elf_Addr *where, addr, addend;
+	Elf_Addr *where, addr, addend, val;
 	Elf_Word rtype, symidx;
 	const Elf_Rel *rel;
 	const Elf_Rela *rela;
@@ -175,6 +166,12 @@ elf_reloc_internal(linker_file_t lf, Elf_Addr relocbase, const void *data,
 		if (error != 0)
 			return (-1);
 		*where = addr + addend;
+		break;
+	case R_AARCH64_IRELATIVE:
+		addr = relocbase + addend;
+		val = ((Elf64_Addr (*)(void))addr)();
+		if (*where != val)
+			*where = val;
 		break;
 	default:
 		printf("kldload: unexpected relocation type %d\n", rtype);

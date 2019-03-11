@@ -14,7 +14,8 @@
 #ifndef LLVM_UTILS_TABLEGEN_CODEGENINTRINSICS_H
 #define LLVM_UTILS_TABLEGEN_CODEGENINTRINSICS_H
 
-#include "llvm/CodeGen/MachineValueType.h"
+#include "SDNodeProperties.h"
+#include "llvm/Support/MachineValueType.h"
 #include <string>
 #include <vector>
 
@@ -104,6 +105,9 @@ struct CodeGenIntrinsic {
   };
   ModRefBehavior ModRef;
 
+  /// SDPatternOperator Properties applied to the intrinsic.
+  unsigned Properties;
+
   /// This is set to true if the intrinsic is overloaded by its argument
   /// types.
   bool isOverloaded;
@@ -120,6 +124,9 @@ struct CodeGenIntrinsic {
   /// True if the intrinsic is no-return.
   bool isNoReturn;
 
+  /// True if the intrinsic is cold.
+  bool isCold;
+
   /// True if the intrinsic is marked as convergent.
   bool isConvergent;
 
@@ -132,6 +139,10 @@ struct CodeGenIntrinsic {
 
   enum ArgAttribute { NoCapture, Returned, ReadOnly, WriteOnly, ReadNone };
   std::vector<std::pair<unsigned, ArgAttribute>> ArgumentAttributes;
+
+  bool hasProperty(enum SDNP Prop) const {
+    return Properties & (1 << Prop);
+  }
 
   CodeGenIntrinsic(Record *R);
 };

@@ -2,6 +2,8 @@
 /*	$KAME: icmp6.h,v 1.46 2001/04/27 15:09:48 itojun Exp $	*/
 
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
  * All rights reserved.
  *
@@ -241,6 +243,10 @@ struct nd_router_advert {	/* router advertisement */
 #define ND_RA_FLAG_RTPREF_MEDIUM	0x00 /* 00000000 */
 #define ND_RA_FLAG_RTPREF_LOW	0x18 /* 00011000 */
 #define ND_RA_FLAG_RTPREF_RSV	0x10 /* 00010000 */
+
+#ifdef EXPERIMENTAL
+#define	ND_RA_FLAG_IPV6_ONLY	0x02 /* draft-ietf-6man-ipv6only-flag */
+#endif
 
 #define nd_ra_router_lifetime	nd_ra_hdr.icmp6_data16[1]
 
@@ -626,7 +632,7 @@ struct icmp6stat {
 	uint64_t icp6s_nd_badopt;	/* bad ND options */
 	uint64_t icp6s_badns;		/* bad neighbor solicitation */
 	uint64_t icp6s_badna;		/* bad neighbor advertisement */
-	uint64_t icp6s_badrs;		/* bad router advertisement */
+	uint64_t icp6s_badrs;		/* bad router solicitation */
 	uint64_t icp6s_badra;		/* bad router advertisement */
 	uint64_t icp6s_badredirect;	/* bad redirect message */
 };

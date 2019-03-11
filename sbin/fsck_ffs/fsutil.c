@@ -1,4 +1,6 @@
-/*
+/*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1980, 1986, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -58,6 +60,7 @@ __FBSDID("$FreeBSD$");
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
+#include <libufs.h>
 
 #include "fsck.h"
 
@@ -219,7 +222,7 @@ static struct bufarea *cgbufs;	/* header for cylinder group cache */
 static int flushtries;		/* number of tries to reclaim memory */
 
 struct bufarea *
-cgget(int cg)
+cglookup(int cg)
 {
 	struct bufarea *cgbp;
 	struct cg *cgp;
@@ -243,6 +246,24 @@ cgget(int cg)
 	initbarea(cgbp, BT_CYLGRP);
 	getblk(cgbp, cgtod(&sblock, cg), sblock.fs_cgsize);
 	return (cgbp);
+}
+
+/*
+ * Mark a cylinder group buffer as dirty.
+ * Update its check-hash if they are enabled.
+ */
+void
+cgdirty(struct bufarea *cgbp)
+{
+	struct cg *cg;
+
+	cg = cgbp->b_un.b_cg;
+	if ((sblock.fs_metackhash & CK_CYLGRP) != 0) {
+		cg->cg_ckhash = 0;
+		cg->cg_ckhash =
+		    calculate_crc32c(~0L, (void *)cg, sblock.fs_cgsize);
+	}
+	dirty(cgbp);
 }
 
 /*
@@ -294,28 +315,6 @@ foundit:
 	return (bp);
 }
 
-/*
- * Timespec operations (from <sys/time.h>).
- */
-#define	timespecsub(vvp, uvp)						\
-	do {								\
-		(vvp)->tv_sec -= (uvp)->tv_sec;				\
-		(vvp)->tv_nsec -= (uvp)->tv_nsec;			\
-		if ((vvp)->tv_nsec < 0) {				\
-			(vvp)->tv_sec--;				\
-			(vvp)->tv_nsec += 1000000000;			\
-		}							\
-	} while (0)
-#define	timespecadd(vvp, uvp)						\
-	do {								\
-		(vvp)->tv_sec += (uvp)->tv_sec;				\
-		(vvp)->tv_nsec += (uvp)->tv_nsec;			\
-		if ((vvp)->tv_nsec >= 1000000000) {			\
-			(vvp)->tv_sec++;				\
-			(vvp)->tv_nsec -= 1000000000;			\
-		}							\
-	} while (0)
-
 void
 getblk(struct bufarea *bp, ufs2_daddr_t blk, long size)
 {
@@ -334,8 +333,9 @@ getblk(struct bufarea *bp, ufs2_daddr_t blk, long size)
 		bp->b_errs = blread(fsreadfd, bp->b_un.b_buf, dblk, size);
 		if (debug) {
 			clock_gettime(CLOCK_REALTIME_PRECISE, &finish);
-			timespecsub(&finish, &start);
-			timespecadd(&readtime[bp->b_type], &finish);
+			timespecsub(&finish, &start, &finish);
+			timespecadd(&readtime[bp->b_type], &finish,
+			    &readtime[bp->b_type]);
 		}
 		bp->b_bno = dblk;
 		bp->b_size = size;
@@ -345,7 +345,6 @@ getblk(struct bufarea *bp, ufs2_daddr_t blk, long size)
 void
 flush(int fd, struct bufarea *bp)
 {
-	int i, j;
 
 	if (!bp->b_dirty)
 		return;
@@ -359,13 +358,24 @@ flush(int fd, struct bufarea *bp)
 		    (bp->b_errs == bp->b_size / dev_bsize) ? "" : "PARTIALLY ",
 		    (long long)bp->b_bno);
 	bp->b_errs = 0;
-	blwrite(fd, bp->b_un.b_buf, bp->b_bno, bp->b_size);
-	if (bp != &sblk)
-		return;
-	for (i = 0, j = 0; i < sblock.fs_cssize; i += sblock.fs_bsize, j++) {
-		blwrite(fswritefd, (char *)sblock.fs_csp + i,
-		    fsbtodb(&sblock, sblock.fs_csaddr + j * sblock.fs_frag),
-		    MIN(sblock.fs_cssize - i, sblock.fs_bsize));
+	/*
+	 * Write using the appropriate function.
+	 */
+	switch (bp->b_type) {
+	case BT_SUPERBLK:
+		if (bp != &sblk)
+			pfatal("BUFFER %p DOES NOT MATCH SBLK %p\n",
+			    bp, &sblk);
+		if (sbput(fd, bp->b_un.b_fs, 0) == 0)
+			fsmodified = 1;
+		break;
+	case BT_CYLGRP:
+		if (cgput(&disk, bp->b_un.b_cg) == 0)
+			fsmodified = 1;
+		break;
+	default:
+		blwrite(fd, bp->b_un.b_buf, bp->b_bno, bp->b_size);
+		break;
 	}
 }
 
@@ -419,6 +429,8 @@ ckfini(int markclean)
 	if (havesb && cursnapshot == 0 && sblock.fs_magic == FS_UFS2_MAGIC &&
 	    sblk.b_bno != sblock.fs_sblockloc / dev_bsize &&
 	    !preen && reply("UPDATE STANDARD SUPERBLOCK")) {
+		/* Change the write destination to standard superblock */
+		sblock.fs_sblockactualloc = sblock.fs_sblockloc;
 		sblk.b_bno = sblock.fs_sblockloc / dev_bsize;
 		sbdirty();
 		flush(fswritefd, &sblk);
@@ -494,7 +506,7 @@ IOstats(char *what)
 	totaldiskreads += diskreads;
 	diskreads = 0;
 	for (i = 0; i < BT_NUMBUFTYPES; i++) {
-		timespecadd(&totalreadtime[i], &readtime[i]);
+		timespecadd(&totalreadtime[i], &readtime[i], &totalreadtime[i]);
 		totalreadcnt[i] += readcnt[i];
 		readtime[i].tv_sec = readtime[i].tv_nsec = 0;
 		readcnt[i] = 0;
@@ -514,7 +526,7 @@ finalIOstats(void)
 	diskreads = totaldiskreads;
 	startpass = startprog;
 	for (i = 0; i < BT_NUMBUFTYPES; i++) {
-		timespecadd(&totalreadtime[i], &readtime[i]);
+		timespecadd(&totalreadtime[i], &readtime[i], &totalreadtime[i]);
 		totalreadcnt[i] += readcnt[i];
 		readtime[i] = totalreadtime[i];
 		readcnt[i] = totalreadcnt[i];
@@ -528,7 +540,7 @@ static void printIOstats(void)
 	int i;
 
 	clock_gettime(CLOCK_REALTIME_PRECISE, &finishpass);
-	timespecsub(&finishpass, &startpass);
+	timespecsub(&finishpass, &startpass, &finishpass);
 	printf("Running time: %jd.%03ld sec\n",
 		(intmax_t)finishpass.tv_sec, finishpass.tv_nsec / 1000000);
 	printf("buffer reads by type:\n");
@@ -564,9 +576,7 @@ blread(int fd, char *buf, ufs2_daddr_t blk, long size)
 		slowio_start();
 	totalreads++;
 	diskreads++;
-	if (lseek(fd, offset, 0) < 0)
-		rwerror("SEEK BLK", blk);
-	else if (read(fd, buf, (int)size) == size) {
+	if (pread(fd, buf, (int)size, offset) == size) {
 		if (bkgrdflag)
 			slowio_end();
 		return (0);
@@ -583,14 +593,11 @@ blread(int fd, char *buf, ufs2_daddr_t blk, long size)
 	} else
 		rwerror("READ BLK", blk);
 
-	if (lseek(fd, offset, 0) < 0)
-		rwerror("SEEK BLK", blk);
 	errs = 0;
 	memset(buf, 0, (size_t)size);
 	printf("THE FOLLOWING DISK SECTORS COULD NOT BE READ:");
 	for (cp = buf, i = 0; i < size; i += secsize, cp += secsize) {
-		if (read(fd, cp, (int)secsize) != secsize) {
-			(void)lseek(fd, offset + i + secsize, 0);
+		if (pread(fd, cp, (int)secsize, offset + i) != secsize) {
 			if (secsize != dev_bsize && dev_bsize != 1)
 				printf(" %jd (%jd),",
 				    (intmax_t)(blk * dev_bsize + i) / secsize,
@@ -617,22 +624,16 @@ blwrite(int fd, char *buf, ufs2_daddr_t blk, ssize_t size)
 		return;
 	offset = blk;
 	offset *= dev_bsize;
-	if (lseek(fd, offset, 0) < 0)
-		rwerror("SEEK BLK", blk);
-	else if (write(fd, buf, size) == size) {
+	if (pwrite(fd, buf, size, offset) == size) {
 		fsmodified = 1;
 		return;
 	}
 	resolved = 0;
 	rwerror("WRITE BLK", blk);
-	if (lseek(fd, offset, 0) < 0)
-		rwerror("SEEK BLK", blk);
 	printf("THE FOLLOWING SECTORS COULD NOT BE WRITTEN:");
 	for (cp = buf, i = 0; i < size; i += dev_bsize, cp += dev_bsize)
-		if (write(fd, cp, dev_bsize) != dev_bsize) {
-			(void)lseek(fd, offset + i + dev_bsize, 0);
+		if (pwrite(fd, cp, dev_bsize, offset + i) != dev_bsize)
 			printf(" %jd,", (intmax_t)blk + i / dev_bsize);
-		}
 	printf("\n");
 	return;
 }
@@ -746,7 +747,7 @@ check_cgmagic(int cg, struct bufarea *cgbp)
 		cgp->cg_nextfreeoff = cgp->cg_clusteroff +
 		    howmany(fragstoblks(&sblock, sblock.fs_fpg), CHAR_BIT);
 	}
-	dirty(cgbp);
+	cgdirty(cgbp);
 	return (0);
 }
 
@@ -774,7 +775,7 @@ allocblk(long frags)
 				continue;
 			}
 			cg = dtog(&sblock, i + j);
-			cgbp = cgget(cg);
+			cgbp = cglookup(cg);
 			cgp = cgbp->b_un.b_cg;
 			if (!check_cgmagic(cg, cgbp))
 				return (0);
@@ -788,7 +789,7 @@ allocblk(long frags)
 				cgp->cg_cs.cs_nbfree--;
 			else
 				cgp->cg_cs.cs_nffree -= frags;
-			dirty(cgbp);
+			cgdirty(cgbp);
 			return (i + j);
 		}
 	}

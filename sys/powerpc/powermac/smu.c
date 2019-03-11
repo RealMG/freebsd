@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2009 Nathan Whitehorn
  * All rights reserved.
  *
@@ -628,7 +630,8 @@ static driver_t doorbell_driver = {
 
 static devclass_t doorbell_devclass;
 
-DRIVER_MODULE(smudoorbell, macgpio, doorbell_driver, doorbell_devclass, 0, 0);
+EARLY_DRIVER_MODULE(smudoorbell, macgpio, doorbell_driver, doorbell_devclass,
+    0, 0, BUS_PASS_SUPPORTDEV);
 
 static int
 doorbell_probe(device_t dev)

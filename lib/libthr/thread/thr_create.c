@@ -1,4 +1,6 @@
-/*
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2003 Daniel M. Eischen <deischen@gdeb.com>
  * Copyright (c) 2005, David Xu <davidxu@freebsd.org>
  * All rights reserved.
@@ -50,8 +52,9 @@ static void thread_start(struct pthread *curthread);
 __weak_reference(_pthread_create, pthread_create);
 
 int
-_pthread_create(pthread_t * thread, const pthread_attr_t * attr,
-	       void *(*start_routine) (void *), void *arg)
+_pthread_create(pthread_t * __restrict thread,
+    const pthread_attr_t * __restrict attr, void *(*start_routine) (void *),
+    void * __restrict arg)
 {
 	struct pthread *curthread, *new_thread;
 	struct thr_param param;
@@ -70,8 +73,7 @@ _pthread_create(pthread_t * thread, const pthread_attr_t * attr,
 	 */
 	if (_thr_isthreaded() == 0) {
 		_malloc_first_thread();
-		if (_thr_setthreaded(1))
-			return (EAGAIN);
+		_thr_setthreaded(1);
 	}
 
 	curthread = _get_curthread();

@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 2002 Poul-Henning Kamp
  * Copyright (c) 2002 Networks Associates Technology, Inc.
  * All rights reserved.
@@ -157,8 +159,10 @@ struct g_geom {
 	void			*spare1;
 	void			*softc;
 	unsigned		flags;
-#define	G_GEOM_WITHER		1
-#define	G_GEOM_VOLATILE_BIO	2
+#define	G_GEOM_WITHER		0x01
+#define	G_GEOM_VOLATILE_BIO	0x02
+#define	G_GEOM_IN_ACCESS	0x04
+#define	G_GEOM_ACCESS_WAIT	0x08
 	LIST_HEAD(,g_geom_alias) aliases;
 };
 
@@ -211,8 +215,8 @@ struct g_provider {
 	TAILQ_ENTRY(g_provider)	orphan;
 	off_t			mediasize;
 	u_int			sectorsize;
-	u_int			stripesize;
-	u_int			stripeoffset;
+	off_t			stripesize;
+	off_t			stripeoffset;
 	struct devstat		*stat;
 	u_int			nstart, nend;
 	u_int			flags;
@@ -342,6 +346,8 @@ void * g_read_data(struct g_consumer *cp, off_t offset, off_t length, int *error
 int g_write_data(struct g_consumer *cp, off_t offset, void *ptr, off_t length);
 int g_delete_data(struct g_consumer *cp, off_t offset, off_t length);
 void g_print_bio(struct bio *bp);
+int g_use_g_read_data(void *, off_t, void **, int);
+int g_use_g_write_data(void *, off_t, void *, int);
 
 /* geom_kern.c / geom_kernsim.c */
 

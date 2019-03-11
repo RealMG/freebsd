@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1992, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -43,8 +45,7 @@ __FBSDID("$FreeBSD$");
  * Convert (signed) quad to double.
  */
 double
-__floatdidf(x)
-	quad_t x;
+__floatdidf(quad_t x)
 {
 	double d;
 	union uu u;

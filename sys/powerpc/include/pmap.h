@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause AND BSD-4-Clause
+ *
  * Copyright (C) 2006 Semihalf, Marian Balakowicz <m8@semihalf.com>
  * All rights reserved.
  *
@@ -258,6 +260,10 @@ void		*pmap_mapdev_attr(vm_paddr_t, vm_size_t, vm_memattr_t);
 void		pmap_unmapdev(vm_offset_t, vm_size_t);
 void		pmap_page_set_memattr(vm_page_t, vm_memattr_t);
 int		pmap_change_attr(vm_offset_t, vm_size_t, vm_memattr_t);
+int		pmap_map_user_ptr(pmap_t pm, volatile const void *uaddr,
+		    void **kaddr, size_t ulen, size_t *klen);
+int		pmap_decode_kernel_ptr(vm_offset_t addr, int *is_user,
+		    vm_offset_t *decoded_addr);
 void		pmap_deactivate(struct thread *);
 vm_paddr_t	pmap_kextract(vm_offset_t);
 int		pmap_dev_direct_mapped(vm_paddr_t, vm_size_t);
@@ -281,6 +287,13 @@ extern	int pmap_bootstrapped;
 vm_offset_t pmap_early_io_map(vm_paddr_t pa, vm_size_t size);
 void pmap_early_io_unmap(vm_offset_t va, vm_size_t size);
 void pmap_track_page(pmap_t pmap, vm_offset_t va);
+
+static inline int
+pmap_vmspace_copy(pmap_t dst_pmap __unused, pmap_t src_pmap __unused)
+{
+
+	return (0);
+}
 
 #endif
 

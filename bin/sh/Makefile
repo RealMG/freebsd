@@ -3,6 +3,12 @@
 
 .include <src.opts.mk>
 
+CONFGROUPS=	ETC ROOT
+ETC=	profile
+ROOT=	dot.shrc dot.profile
+ROOTDIR=	/root
+ROOTNAME_dot.shrc=	.shrc
+ROOTNAME_dot.profile=	.profile
 PACKAGE=runtime
 PROG=	sh
 INSTALLFLAGS= -S
@@ -32,8 +38,7 @@ WFORMAT=0
 	${.CURDIR:H}/test \
 	${SRCTOP}/usr.bin/printf
 
-CLEANFILES+= mknodes mknodes.o \
-	mksyntax mksyntax.o
+CLEANFILES+= mknodes mksyntax
 CLEANFILES+= ${GENSRCS} ${GENHDRS}
 
 build-tools: mknodes mksyntax
@@ -43,13 +48,7 @@ builtins.h: .NOMETA
 builtins.c builtins.h: mkbuiltins builtins.def
 	sh ${.CURDIR}/mkbuiltins ${.CURDIR}
 
-# XXX this is just to stop the default .c rule being used, so that the
-# intermediate object has a fixed name.
-# XXX we have a default .c rule, but no default .o rule.
-mknodes.o mksyntax.o: ${BUILD_TOOLS_META}
-	${CC} ${CFLAGS} ${LDFLAGS} ${.IMPSRC} ${LDLIBS} -o ${.TARGET}
-mknodes: mknodes.o ${BUILD_TOOLS_META}
-mksyntax: mksyntax.o ${BUILD_TOOLS_META}
+mknodes mksyntax: ${BUILD_TOOLS_META}
 
 .ORDER: nodes.c nodes.h
 nodes.h: .NOMETA
@@ -66,5 +65,11 @@ token.h: mktokens
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
+
+beforeinstallconfig:
+	rm -f ${DESTDIR}/.profile
+
+afterinstallconfig:
+	${INSTALL_LINK} ${TAG_ARGS} ${DESTDIR}/root/.profile ${DESTDIR}/.profile
 
 .include <bsd.prog.mk>

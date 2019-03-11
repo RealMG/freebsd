@@ -5,6 +5,7 @@ Makefile.config.in
 PSD.doc/Makefile
 PSD.doc/tutorial.ms
 README
+VERSION
 aclocal.m4
 arch.c
 bmake.1
@@ -162,6 +163,8 @@ unit-tests/varcmd.exp
 unit-tests/varcmd.mk
 unit-tests/varmisc.exp
 unit-tests/varmisc.mk
+unit-tests/varquote.exp
+unit-tests/varquote.mk
 unit-tests/varshell.exp
 unit-tests/varshell.mk
 util.c

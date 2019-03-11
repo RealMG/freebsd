@@ -1,4 +1,6 @@
-/*
+/*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 2010, LSI Corp.
  * All rights reserved.
  * Author : Manjunath Ranganathaiah
@@ -443,9 +445,7 @@ tws_setup_intr(struct tws_softc *sc, int irqs)
         if (!(sc->intr_handle[i])) {
             if ((error = bus_setup_intr(sc->tws_dev, sc->irq_res[i],
                                     INTR_TYPE_CAM | INTR_MPSAFE,
-#if (__FreeBSD_version >= 700000)
                                     NULL, 
-#endif
                                     tws_intr, sc, &sc->intr_handle[i]))) {
                 tws_log(sc, SETUP_INTR_RES);
                 return(FAILURE);

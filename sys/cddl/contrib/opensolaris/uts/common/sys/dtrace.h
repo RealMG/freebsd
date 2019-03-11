@@ -254,6 +254,8 @@ typedef enum dtrace_probespec {
 #define	DIF_VAR_GID		0x011f	/* process group ID */
 #define	DIF_VAR_ERRNO		0x0120	/* thread errno */
 #define	DIF_VAR_EXECARGS	0x0121	/* process arguments */
+#define	DIF_VAR_JID		0x0122	/* process jail id */
+#define	DIF_VAR_JAILNAME	0x0123	/* process jail name */
 
 #ifndef illumos
 #define	DIF_VAR_CPU		0x0200
@@ -2433,12 +2435,11 @@ extern void dtrace_helpers_destroy(proc_t *);
 
 #elif defined(__powerpc__)
 
-#define DTRACE_INVOP_RET	1
-#define DTRACE_INVOP_BCTR	2
-#define DTRACE_INVOP_BLR	3
-#define DTRACE_INVOP_JUMP	4
-#define DTRACE_INVOP_MFLR_R0	5
-#define DTRACE_INVOP_NOP	6
+#define DTRACE_INVOP_BCTR	1
+#define DTRACE_INVOP_BLR	2
+#define DTRACE_INVOP_JUMP	3
+#define DTRACE_INVOP_MFLR_R0	4
+#define DTRACE_INVOP_NOP	5
 
 #elif defined(__arm__)
 
@@ -2494,12 +2495,11 @@ extern void dtrace_helpers_destroy(proc_t *);
 
 #elif defined(__riscv)
 
-#define	SD_RA_SP_MASK		0x01fff07f
-#define	SD_RA_SP		0x00113023
-
 #define	DTRACE_INVOP_SD		1
-#define	DTRACE_INVOP_RET	2
-#define	DTRACE_INVOP_NOP	3
+#define	DTRACE_INVOP_C_SDSP	2
+#define	DTRACE_INVOP_RET	3
+#define	DTRACE_INVOP_C_RET	4
+#define	DTRACE_INVOP_NOP	5
 
 #endif
 

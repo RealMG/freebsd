@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 1999-2002 Poul-Henning Kamp
  * All rights reserved.
  *
@@ -200,7 +202,8 @@ dev_refthread(struct cdev *dev, int *ref)
 			csw = NULL;
 	}
 	dev_unlock();
-	*ref = 1;
+	if (csw != NULL)
+		*ref = 1;
 	return (csw);
 }
 
@@ -627,7 +630,7 @@ prep_cdevsw(struct cdevsw *devsw, int flags)
 		return (0);
 	}
 
-	if (devsw->d_version != D_VERSION_03) {
+	if (devsw->d_version != D_VERSION_04) {
 		printf(
 		    "WARNING: Device driver \"%s\" has wrong version %s\n",
 		    devsw->d_name == NULL ? "???" : devsw->d_name,
@@ -864,11 +867,11 @@ make_dev(struct cdevsw *devsw, int unit, uid_t uid, gid_t gid, int mode,
 {
 	struct cdev *dev;
 	va_list ap;
-	int res;
+	int res __unused;
 
 	va_start(ap, fmt);
 	res = make_dev_credv(0, &dev, devsw, unit, NULL, uid, gid, mode, fmt,
-	    ap);
+		      ap);
 	va_end(ap);
 	KASSERT(res == 0 && dev != NULL,
 	    ("make_dev: failed make_dev_credv (error=%d)", res));
@@ -881,7 +884,7 @@ make_dev_cred(struct cdevsw *devsw, int unit, struct ucred *cr, uid_t uid,
 {
 	struct cdev *dev;
 	va_list ap;
-	int res;
+	int res __unused;
 
 	va_start(ap, fmt);
 	res = make_dev_credv(0, &dev, devsw, unit, cr, uid, gid, mode, fmt, ap);
@@ -994,7 +997,7 @@ make_dev_alias(struct cdev *pdev, const char *fmt, ...)
 {
 	struct cdev *dev;
 	va_list ap;
-	int res;
+	int res __unused;
 
 	va_start(ap, fmt);
 	res = make_dev_alias_v(MAKEDEV_WAITOK, &dev, pdev, fmt, ap);

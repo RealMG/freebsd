@@ -14,12 +14,23 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <eh.h>
-#include <corecrt_terminate.h>
+
+extern "C" {
+typedef void (__cdecl* terminate_handler)();
+_LIBCPP_CRT_FUNC terminate_handler __cdecl set_terminate(
+    terminate_handler _NewTerminateHandler) throw();
+_LIBCPP_CRT_FUNC terminate_handler __cdecl _get_terminate();
+
+typedef void (__cdecl* unexpected_handler)();
+unexpected_handler __cdecl set_unexpected(
+    unexpected_handler _NewUnexpectedHandler) throw();
+unexpected_handler __cdecl _get_unexpected();
+
+int __cdecl __uncaught_exceptions();
+}
 
 namespace std {
 
-// libcxxrt provides implementations of these functions itself.
 unexpected_handler
 set_unexpected(unexpected_handler func) _NOEXCEPT {
   return ::set_unexpected(func);
@@ -72,18 +83,82 @@ int uncaught_exceptions() _NOEXCEPT {
     return __uncaught_exceptions();
 }
 
-bad_array_length::bad_array_length() _NOEXCEPT
+#if defined(_LIBCPP_NO_VCRUNTIME)
+bad_cast::bad_cast() _NOEXCEPT
 {
 }
 
-bad_array_length::~bad_array_length() _NOEXCEPT
+bad_cast::~bad_cast() _NOEXCEPT
+{
+}
+
+const char *
+bad_cast::what() const _NOEXCEPT
+{
+  return "std::bad_cast";
+}
+
+bad_typeid::bad_typeid() _NOEXCEPT
+{
+}
+
+bad_typeid::~bad_typeid() _NOEXCEPT
+{
+}
+
+const char *
+bad_typeid::what() const _NOEXCEPT
+{
+  return "std::bad_typeid";
+}
+
+exception::~exception() _NOEXCEPT
+{
+}
+
+const char* exception::what() const _NOEXCEPT
+{
+  return "std::exception";
+}
+
+
+bad_exception::~bad_exception() _NOEXCEPT
+{
+}
+
+const char* bad_exception::what() const _NOEXCEPT
+{
+  return "std::bad_exception";
+}
+
+
+bad_alloc::bad_alloc() _NOEXCEPT
+{
+}
+
+bad_alloc::~bad_alloc() _NOEXCEPT
 {
 }
 
 const char*
-bad_array_length::what() const _NOEXCEPT
+bad_alloc::what() const _NOEXCEPT
 {
-    return "bad_array_length";
+    return "std::bad_alloc";
 }
+
+bad_array_new_length::bad_array_new_length() _NOEXCEPT
+{
+}
+
+bad_array_new_length::~bad_array_new_length() _NOEXCEPT
+{
+}
+
+const char*
+bad_array_new_length::what() const _NOEXCEPT
+{
+    return "bad_array_new_length";
+}
+#endif // _LIBCPP_NO_VCRUNTIME
 
 } // namespace std

@@ -68,7 +68,8 @@ static driver_t bman_driver = {
 };
 
 static devclass_t bman_devclass;
-DRIVER_MODULE(bman, simplebus, bman_driver, bman_devclass, 0, 0);
+EARLY_DRIVER_MODULE(bman, simplebus, bman_driver, bman_devclass, 0, 0,
+    BUS_PASS_SUPPORTDEV);
 
 static int
 bman_fdt_probe(device_t dev)
@@ -122,8 +123,17 @@ get_addr_props(phandle_t node, uint32_t *addrp, uint32_t *sizep)
 static int
 bman_portals_fdt_probe(device_t dev)
 {
+	phandle_t node;
 
-	if (!ofw_bus_is_compatible(dev, "fsl,bman-portals"))
+	if (ofw_bus_is_compatible(dev, "simple-bus")) {
+		node = ofw_bus_get_node(dev);
+		for (node = OF_child(node); node > 0; node = OF_peer(node)) {
+			if (ofw_bus_node_is_compatible(node, "fsl,bman-portal"))
+				break;
+		}
+		if (node <= 0)
+			return (ENXIO);
+	} else if (!ofw_bus_is_compatible(dev, "fsl,bman-portals"))
 		return (ENXIO);
 
 	device_set_desc(dev, BMAN_PORT_DEVSTR);

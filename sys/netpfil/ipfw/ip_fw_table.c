@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2004 Ruslan Ermilov and Vsevolod Lobko.
  * Copyright (c) 2014 Yandex LLC
  * Copyright (c) 2014 Alexander V. Chernikov
@@ -53,7 +55,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/socketvar.h>
 #include <sys/queue.h>
 #include <net/if.h>	/* ip_fw.h requires IFNAMSIZ */
-#include <net/pfil.h>
 
 #include <netinet/in.h>
 #include <netinet/ip_var.h>	/* struct ipfw_rule_ref */
@@ -3169,7 +3170,7 @@ alloc_table_config(struct ip_fw_chain *ch, struct tid_info *ti,
 		if (ntlv == NULL)
 			return (NULL);
 		name = ntlv->name;
-		set = ntlv->set;
+		set = (V_fw_tables_sets == 0) ? 0 : ntlv->set;
 	} else {
 		/* Compat part: convert number to string representation */
 		snprintf(bname, sizeof(bname), "%d", ti->uidx);

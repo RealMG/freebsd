@@ -2,6 +2,8 @@
 /*	$NetBSD: msdosfs_vfsops.c,v 1.51 1997/11/17 15:36:58 ws Exp $	*/
 
 /*-
+ * SPDX-License-Identifier: BSD-4-Clause
+ *
  * Copyright (C) 1994, 1995, 1997 Wolfgang Solfrank.
  * Copyright (C) 1994, 1995, 1997 TooLs GmbH.
  * All rights reserved.
@@ -74,6 +76,10 @@
 #include <fs/msdosfs/denode.h>
 #include <fs/msdosfs/fat.h>
 #include <fs/msdosfs/msdosfsmount.h>
+
+#ifdef MSDOSFS_DEBUG
+#include <sys/rwlock.h>
+#endif
 
 static const char msdosfs_lock_msg[] = "fatlk";
 
@@ -314,7 +320,7 @@ msdosfs_mount(struct mount *mp)
 			/* Now that the volume is modifiable, mark it dirty. */
 			error = markvoldirty(pmp, 1);
 			if (error)
-				return (error); 
+				return (error);
 		}
 	}
 	/*
@@ -412,9 +418,12 @@ mountmsdosfs(struct vnode *devvp, struct mount *mp)
 		return (error);
 	}
 	dev_ref(dev);
-	VOP_UNLOCK(devvp, 0);
-
 	bo = &devvp->v_bufobj;
+	VOP_UNLOCK(devvp, 0);
+	if (dev->si_iosize_max != 0)
+		mp->mnt_iosize_max = dev->si_iosize_max;
+	if (mp->mnt_iosize_max > MAXPHYS)
+		mp->mnt_iosize_max = MAXPHYS;
 
 	/*
 	 * Read the boot sector of the filesystem, and then check the

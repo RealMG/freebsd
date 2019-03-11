@@ -11,7 +11,6 @@
 
 #include "llvm/DebugInfo/CodeView/CodeViewError.h"
 #include "llvm/DebugInfo/CodeView/SymbolVisitorCallbacks.h"
-#include "llvm/Support/BinaryByteStream.h"
 
 using namespace llvm;
 using namespace llvm::codeview;
@@ -76,7 +75,7 @@ Error CVSymbolVisitor::visitSymbolStream(const CVSymbolArray &Symbols) {
 Error CVSymbolVisitor::visitSymbolStream(const CVSymbolArray &Symbols,
                                          uint32_t InitialOffset) {
   for (auto I : Symbols) {
-    if (auto EC = visitSymbolRecord(I, InitialOffset))
+    if (auto EC = visitSymbolRecord(I, InitialOffset + Symbols.skew()))
       return EC;
     InitialOffset += I.length();
   }

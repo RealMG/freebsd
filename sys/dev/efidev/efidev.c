@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2016 Netflix, Inc.
- * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -216,6 +215,6 @@ static moduledata_t efidev_moddata = {
 	.priv = NULL,
 };
 
-DECLARE_MODULE(efidev, efidev_moddata, SI_SUB_DEVFS, SI_ORDER_ANY);
+DECLARE_MODULE(efidev, efidev_moddata, SI_SUB_DRIVERS, SI_ORDER_ANY);
 MODULE_VERSION(efidev, 1);
 MODULE_DEPEND(efidev, efirt, 1, 1, 1);

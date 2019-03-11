@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 2011 The FreeBSD Foundation
  * All rights reserved.
  *
@@ -418,7 +420,7 @@ arm_tmr_attach(device_t dev)
 			tc_err = attach_tc(sc);
 		else if (bootverbose)
 			device_printf(sc->dev,
-			    "not using variable-frequency device as timecounter");
+			    "not using variable-frequency device as timecounter\n");
 		sc->memrid++;
 		sc->irqrid++;
 	}
@@ -545,6 +547,7 @@ DELAY(int usec)
 	struct arm_tmr_softc *sc;
 	int32_t counts;
 
+	TSENTER();
 	/* Check the timers are setup, if not just use a for loop for the meantime */
 	if (arm_tmr_tc == NULL || arm_tmr_timecount.tc_frequency == 0) {
 		for (; usec > 0; usec--)
@@ -556,5 +559,6 @@ DELAY(int usec)
 		sc = arm_tmr_tc->tc_priv;
 		arm_tmr_delay(usec, sc);
 	}
+	TSEXIT();
 }
 #endif

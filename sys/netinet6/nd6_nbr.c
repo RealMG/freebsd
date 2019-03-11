@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
  * All rights reserved.
  *
@@ -97,7 +99,7 @@ static void nd6_na_output_fib(struct ifnet *, const struct in6_addr *,
 static void nd6_ns_output_fib(struct ifnet *, const struct in6_addr *,
     const struct in6_addr *, const struct in6_addr *, uint8_t *, u_int);
 
-static VNET_DEFINE(int, dad_enhanced) = 1;
+VNET_DEFINE_STATIC(int, dad_enhanced) = 1;
 #define	V_dad_enhanced			VNET(dad_enhanced)
 
 SYSCTL_DECL(_net_inet6_ip6);
@@ -105,7 +107,7 @@ SYSCTL_INT(_net_inet6_ip6, OID_AUTO, dad_enhanced, CTLFLAG_VNET | CTLFLAG_RW,
     &VNET_NAME(dad_enhanced), 0,
     "Enable Enhanced DAD, which adds a random nonce to NS messages for DAD.");
 
-static VNET_DEFINE(int, dad_maxtry) = 15;	/* max # of *tries* to
+VNET_DEFINE_STATIC(int, dad_maxtry) = 15;	/* max # of *tries* to
 						   transmit DAD packet */
 #define	V_dad_maxtry			VNET(dad_maxtry)
 
@@ -134,6 +136,10 @@ nd6_ns_input(struct mbuf *m, int off, int icmp6len)
 	union nd_opts ndopts;
 	struct sockaddr_dl proxydl;
 	char ip6bufs[INET6_ADDRSTRLEN], ip6bufd[INET6_ADDRSTRLEN];
+
+	/* RFC 6980: Nodes MUST silently ignore fragments */
+	if(m->m_flags & M_FRAGMENTED)
+		goto freeit;
 
 	rflag = (V_ip6_forwarding) ? ND_NA_FLAG_ROUTER : 0;
 	if (ND_IFINFO(ifp)->flags & ND6_IFF_ACCEPT_RTADV && V_ip6_norbit_raif)
@@ -607,6 +613,7 @@ nd6_ns_output(struct ifnet *ifp, const struct in6_addr *saddr6,
 void
 nd6_na_input(struct mbuf *m, int off, int icmp6len)
 {
+	struct epoch_tracker et;
 	struct ifnet *ifp = m->m_pkthdr.rcvif;
 	struct ip6_hdr *ip6 = mtod(m, struct ip6_hdr *);
 	struct nd_neighbor_advert *nd_na;
@@ -628,6 +635,10 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 	size_t linkhdrsize;
 	int lladdr_off;
 	char ip6bufs[INET6_ADDRSTRLEN], ip6bufd[INET6_ADDRSTRLEN];
+
+	/* RFC 6980: Nodes MUST silently ignore fragments */
+	if(m->m_flags & M_FRAGMENTED)
+		goto freeit;
 
 	if (ip6->ip6_hlim != 255) {
 		nd6log((LOG_ERR,
@@ -730,9 +741,9 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 	 * If no neighbor cache entry is found, NA SHOULD silently be
 	 * discarded.
 	 */
-	IF_AFDATA_RLOCK(ifp);
+	NET_EPOCH_ENTER(et);
 	ln = nd6_lookup(&taddr6, LLE_EXCLUSIVE, ifp);
-	IF_AFDATA_RUNLOCK(ifp);
+	NET_EPOCH_EXIT(et);
 	if (ln == NULL) {
 		goto freeit;
 	}
@@ -884,7 +895,7 @@ nd6_na_input(struct mbuf *m, int off, int icmp6len)
 		LLE_WUNLOCK(ln);
 
 	if (chain != NULL)
-		nd6_flush_holdchain(ifp, ifp, chain, &sin6);
+		nd6_flush_holdchain(ifp, chain, &sin6);
 
 	if (checklink)
 		pfxlist_onlink_check();
@@ -1080,14 +1091,11 @@ caddr_t
 nd6_ifptomac(struct ifnet *ifp)
 {
 	switch (ifp->if_type) {
-	case IFT_ARCNET:
 	case IFT_ETHER:
-	case IFT_FDDI:
 	case IFT_IEEE1394:
 	case IFT_L2VLAN:
 	case IFT_INFINIBAND:
 	case IFT_BRIDGE:
-	case IFT_ISO88025:
 		return IF_LLADDR(ifp);
 	default:
 		return NULL;
@@ -1110,10 +1118,11 @@ struct dadq {
 #define	ND_OPT_NONCE_LEN32 \
 		((ND_OPT_NONCE_LEN + sizeof(uint32_t) - 1)/sizeof(uint32_t))
 	uint32_t dad_nonce[ND_OPT_NONCE_LEN32];
+	bool dad_ondadq;	/* on dadq? Protected by DADQ_WLOCK. */
 };
 
-static VNET_DEFINE(TAILQ_HEAD(, dadq), dadq);
-static VNET_DEFINE(struct rwlock, dad_rwlock);
+VNET_DEFINE_STATIC(TAILQ_HEAD(, dadq), dadq);
+VNET_DEFINE_STATIC(struct rwlock, dad_rwlock);
 #define	V_dadq			VNET(dadq)
 #define	V_dad_rwlock		VNET(dad_rwlock)
 
@@ -1128,6 +1137,7 @@ nd6_dad_add(struct dadq *dp)
 
 	DADQ_WLOCK();
 	TAILQ_INSERT_TAIL(&V_dadq, dp, dad_list);
+	dp->dad_ondadq = true;
 	DADQ_WUNLOCK();
 }
 
@@ -1136,9 +1146,17 @@ nd6_dad_del(struct dadq *dp)
 {
 
 	DADQ_WLOCK();
-	TAILQ_REMOVE(&V_dadq, dp, dad_list);
-	DADQ_WUNLOCK();
-	nd6_dad_rele(dp);
+	if (dp->dad_ondadq) {
+		/*
+		 * Remove dp from the dadq and release the dadq's
+		 * reference.
+		 */
+		TAILQ_REMOVE(&V_dadq, dp, dad_list);
+		dp->dad_ondadq = false;
+		DADQ_WUNLOCK();
+		nd6_dad_rele(dp);
+	} else
+		DADQ_WUNLOCK();
 }
 
 static struct dadq *
@@ -1271,6 +1289,8 @@ nd6_dad_start(struct ifaddr *ifa, int delay)
 	dp->dad_ns_icount = dp->dad_na_icount = 0;
 	dp->dad_ns_ocount = dp->dad_ns_tcount = 0;
 	dp->dad_ns_lcount = dp->dad_loopbackprobe = 0;
+
+	/* Add this to the dadq and add a reference for the dadq. */
 	refcount_init(&dp->dad_refcnt, 1);
 	nd6_dad_add(dp);
 	nd6_dad_starttimer(dp, delay, 0);
@@ -1291,16 +1311,9 @@ nd6_dad_stop(struct ifaddr *ifa)
 	}
 
 	nd6_dad_stoptimer(dp);
-
-	/*
-	 * The DAD queue entry may have been removed by nd6_dad_timer() while
-	 * we were waiting for it to stop, so re-do the lookup.
-	 */
-	nd6_dad_rele(dp);
-	if (nd6_dad_find(ifa, NULL) == NULL)
-		return;
-
 	nd6_dad_del(dp);
+
+	/* Release this function's reference, acquired by nd6_dad_find(). */
 	nd6_dad_rele(dp);
 }
 
@@ -1452,7 +1465,6 @@ nd6_dad_duplicated(struct ifaddr *ifa, struct dadq *dp)
 		 */
 		switch (ifp->if_type) {
 		case IFT_ETHER:
-		case IFT_FDDI:
 		case IFT_ATM:
 		case IFT_IEEE1394:
 		case IFT_INFINIBAND:
@@ -1504,17 +1516,11 @@ nd6_dad_ns_output(struct dadq *dp)
 static void
 nd6_dad_ns_input(struct ifaddr *ifa, struct nd_opt_nonce *ndopt_nonce)
 {
-	struct in6_ifaddr *ia;
-	struct ifnet *ifp;
-	const struct in6_addr *taddr6;
 	struct dadq *dp;
 
 	if (ifa == NULL)
 		panic("ifa == NULL in nd6_dad_ns_input");
 
-	ia = (struct in6_ifaddr *)ifa;
-	ifp = ifa->ifa_ifp;
-	taddr6 = &ia->ia_addr.sin6_addr;
 	/* Ignore Nonce option when Enhanced DAD is disabled. */
 	if (V_dad_enhanced == 0)
 		ndopt_nonce = NULL;

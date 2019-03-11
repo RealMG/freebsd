@@ -325,7 +325,7 @@ vop_symlink {
 	OUT struct vnode **vpp;
 	IN struct componentname *cnp;
 	IN struct vattr *vap;
-	IN char *target;
+	IN const char *target;
 };
 
 
@@ -429,7 +429,7 @@ vop_print {
 vop_pathconf {
 	IN struct vnode *vp;
 	IN int name;
-	OUT register_t *retval;
+	OUT long *retval;
 };
 
 

@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2001 Takanori Watanabe <takawata@jp.freebsd.org>
  * Copyright (c) 2001-2012 Mitsuru IWASAKI <iwasaki@jp.freebsd.org>
  * Copyright (c) 2003 Peter Wemm
@@ -44,6 +46,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/memrange.h>
 #include <sys/smp.h>
 #include <sys/systm.h>
+#include <sys/cons.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -51,10 +54,11 @@ __FBSDID("$FreeBSD$");
 #include <machine/clock.h>
 #include <machine/cpu.h>
 #include <machine/intr_machdep.h>
+#include <machine/md_var.h>
 #include <x86/mca.h>
 #include <machine/pcb.h>
 #include <machine/specialreg.h>
-#include <machine/md_var.h>
+#include <x86/ucode.h>
 
 #ifdef DEV_APIC
 #include <x86/apicreg.h>
@@ -77,6 +81,7 @@ CTASSERT(sizeof(wakecode) < PAGE_SIZE - 1024);
 
 extern int		acpi_resume_beep;
 extern int		acpi_reset_video;
+extern int		acpi_susp_bounce;
 
 #ifdef SMP
 extern struct susppcb	**susppcbs;
@@ -139,8 +144,13 @@ acpi_wakeup_ap(struct acpi_softc *sc, int cpu)
 }
 
 #define	WARMBOOT_TARGET		0
+#ifdef __amd64__
 #define	WARMBOOT_OFF		(KERNBASE + 0x0467)
 #define	WARMBOOT_SEG		(KERNBASE + 0x0469)
+#else /* __i386__ */
+#define	WARMBOOT_OFF		(PMAP_MAP_LOW + 0x0467)
+#define	WARMBOOT_SEG		(PMAP_MAP_LOW + 0x0469)
+#endif
 
 #define	CMOS_REG		(0x70)
 #define	CMOS_DATA		(0x71)
@@ -177,6 +187,16 @@ acpi_wakeup_cpus(struct acpi_softc *sc)
 		}
 	}
 
+#ifdef __i386__
+	/*
+	 * Remove the identity mapping of low memory for all CPUs and sync
+	 * the TLB for the BSP.  The APs are now spinning in
+	 * cpususpend_handler() and we will release them soon.  Then each
+	 * will invalidate its TLB.
+	 */
+	pmap_remap_lowptdi(false);
+#endif
+
 	/* restore the warmstart vector */
 	*(uint32_t *)WARMBOOT_OFF = mpbioswarmvec;
 
@@ -190,6 +210,10 @@ acpi_sleep_machdep(struct acpi_softc *sc, int state)
 {
 	ACPI_STATUS	status;
 	struct pcb	*pcb;
+#ifdef __amd64__
+	struct pcpu *pc;
+	int i;
+#endif
 
 	if (sc->acpi_wakeaddr == 0ul)
 		return (-1);	/* couldn't alloc wake memory */
@@ -219,6 +243,15 @@ acpi_sleep_machdep(struct acpi_softc *sc, int state)
 			return (0);	/* couldn't sleep */
 		}
 #endif
+#ifdef __amd64__
+		hw_ibrs_active = 0;
+		hw_ssb_active = 0;
+		cpu_stdext_feature3 = 0;
+		CPU_FOREACH(i) {
+			pc = pcpu_find(i);
+			pc->pc_ibpb_set = 0;
+		}
+#endif
 
 		WAKECODE_FIXUP(resume_beep, uint8_t, (acpi_resume_beep != 0));
 		WAKECODE_FIXUP(reset_video, uint8_t, (acpi_reset_video != 0));
@@ -227,11 +260,26 @@ acpi_sleep_machdep(struct acpi_softc *sc, int state)
 		WAKECODE_FIXUP(wakeup_efer, uint64_t, rdmsr(MSR_EFER) &
 		    ~(EFER_LMA));
 #else
+		if ((amd_feature & AMDID_NX) != 0)
+			WAKECODE_FIXUP(wakeup_efer, uint64_t, rdmsr(MSR_EFER));
 		WAKECODE_FIXUP(wakeup_cr4, register_t, pcb->pcb_cr4);
 #endif
 		WAKECODE_FIXUP(wakeup_pcb, struct pcb *, pcb);
 		WAKECODE_FIXUP(wakeup_gdt, uint16_t, pcb->pcb_gdt.rd_limit);
 		WAKECODE_FIXUP(wakeup_gdt + 2, uint64_t, pcb->pcb_gdt.rd_base);
+
+#ifdef __i386__
+		/*
+		 * Map some low memory with virt == phys for ACPI wakecode
+		 * to use to jump to high memory after enabling paging. This
+		 * is the same as for similar jump in locore, except the
+		 * jump is a single instruction, and we know its address
+		 * more precisely so only need a single PTD, and we have to
+		 * be careful to use the kernel map (PTD[0] is for curthread
+		 * which may be a user thread in deprecated APIs).
+		 */
+		pmap_remap_lowptdi(true);
+#endif
 
 		/* Call ACPICA to enter the desired sleep state */
 		if (state == ACPI_STATE_S4 && sc->acpi_s4bios)
@@ -245,9 +293,18 @@ acpi_sleep_machdep(struct acpi_softc *sc, int state)
 			return (0);	/* couldn't sleep */
 		}
 
+		if (acpi_susp_bounce)
+			resumectx(pcb);
+
 		for (;;)
 			ia32_pause();
 	} else {
+		/*
+		 * Re-initialize console hardware as soon as possibe.
+		 * No console output (e.g. printf) is allowed before
+		 * this point.
+		 */
+		cnresume();
 #ifdef __amd64__
 		fpuresume(susppcbs[0]->sp_fpususpend);
 #else
@@ -269,6 +326,7 @@ acpi_wakeup_machdep(struct acpi_softc *sc, int state, int sleep_result,
 	if (!intr_enabled) {
 		/* Wakeup MD procedures in interrupt disabled context */
 		if (sleep_result == 1) {
+			ucode_reload();
 			pmap_init_pat();
 			initializecpu();
 			PCPU_SET(switchtime, 0);
@@ -284,7 +342,7 @@ acpi_wakeup_machdep(struct acpi_softc *sc, int state, int sleep_result,
 
 #ifdef SMP
 		if (!CPU_EMPTY(&suspcpus))
-			restart_cpus(suspcpus);
+			resume_cpus(suspcpus);
 #endif
 		mca_resume();
 #ifdef __amd64__
@@ -319,8 +377,12 @@ acpi_alloc_wakeup_handler(void *wakepages[ACPI_WAKEPAGES])
 	 * page-aligned.
 	 */
 	for (i = 0; i < ACPI_WAKEPAGES; i++) {
-		wakepages[i] = contigmalloc(PAGE_SIZE, M_DEVBUF, M_NOWAIT,
-		    0x500, 0xa0000, PAGE_SIZE, 0ul);
+		wakepages[i] = contigmalloc(PAGE_SIZE, M_DEVBUF,
+		    M_NOWAIT
+#ifdef __i386__
+			     | M_EXEC
+#endif
+		    , 0x500, 0xa0000, PAGE_SIZE, 0ul);
 		if (wakepages[i] == NULL) {
 			printf("%s: can't alloc wake memory\n", __func__);
 			goto freepages;
@@ -392,12 +454,7 @@ acpi_install_wakeup_handler(struct acpi_softc *sc)
 	/* Save pointers to some global data. */
 	WAKECODE_FIXUP(wakeup_ret, void *, resumectx);
 #ifndef __amd64__
-#if defined(PAE) || defined(PAE_TABLES)
-	WAKECODE_FIXUP(wakeup_cr3, register_t, vtophys(kernel_pmap->pm_pdpt));
-#else
-	WAKECODE_FIXUP(wakeup_cr3, register_t, vtophys(kernel_pmap->pm_pdir));
-#endif
-
+	WAKECODE_FIXUP(wakeup_cr3, register_t, pmap_get_kcr3());
 #else /* __amd64__ */
 	/* Create the initial 1GB replicated page tables */
 	for (i = 0; i < 512; i++) {

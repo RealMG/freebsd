@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: (BSD-3-Clause AND MIT-CMU)
+ *
  * Copyright (c) 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -72,6 +74,7 @@
 #include <sys/_mutex.h>
 #include <sys/_pctrie.h>
 #include <sys/_rwlock.h>
+#include <sys/_domainset.h>
 
 #include <vm/_vm_radix.h>
 
@@ -100,6 +103,7 @@ struct vm_object {
 	struct pglist memq;		/* list of resident pages */
 	struct vm_radix rtree;		/* root of the resident page radix trie*/
 	vm_pindex_t size;		/* Object size */
+	struct domainset_ref domain;	/* NUMA policy. */
 	int generation;			/* generation ID */
 	int ref_count;			/* How many refs?? */
 	int shadow_count;		/* how many objects that this is a shadow for */
@@ -192,20 +196,13 @@ struct vm_object {
 /*
  * Helpers to perform conversion between vm_object page indexes and offsets.
  * IDX_TO_OFF() converts an index into an offset.
- * OFF_TO_IDX() converts an offset into an index.  Since offsets are signed
- *   by default, the sign propagation in OFF_TO_IDX(), when applied to
- *   negative offsets, is intentional and returns a vm_object page index
- *   that cannot be created by a userspace mapping.
- * UOFF_TO_IDX() treats the offset as an unsigned value and converts it
- *   into an index accordingly.  Use it only when the full range of offset
- *   values are allowed.  Currently, this only applies to device mappings.
+ * OFF_TO_IDX() converts an offset into an index.
  * OBJ_MAX_SIZE specifies the maximum page index corresponding to the
  *   maximum unsigned offset.
  */
 #define	IDX_TO_OFF(idx) (((vm_ooffset_t)(idx)) << PAGE_SHIFT)
 #define	OFF_TO_IDX(off) ((vm_pindex_t)(((vm_ooffset_t)(off)) >> PAGE_SHIFT))
-#define	UOFF_TO_IDX(off) (((vm_pindex_t)(off)) >> PAGE_SHIFT)
-#define	OBJ_MAX_SIZE	(UOFF_TO_IDX(UINT64_MAX) + 1)
+#define	OBJ_MAX_SIZE	(OFF_TO_IDX(UINT64_MAX) + 1)
 
 #ifdef	_KERNEL
 
@@ -225,10 +222,10 @@ extern struct object_q vm_object_list;	/* list of allocated objects */
 extern struct mtx vm_object_list_mtx;	/* lock for object list and count */
 
 extern struct vm_object kernel_object_store;
-extern struct vm_object kmem_object_store;
 
+/* kernel and kmem are aliased for backwards KPI compat. */
 #define	kernel_object	(&kernel_object_store)
-#define	kmem_object	(&kmem_object_store)
+#define	kmem_object	(&kernel_object_store)
 
 #define	VM_OBJECT_ASSERT_LOCKED(object)					\
 	rw_assert(&(object)->lock, RA_LOCKED)
@@ -258,6 +255,8 @@ extern struct vm_object kmem_object_store;
 	rw_wowned(&(object)->lock)
 #define	VM_OBJECT_WUNLOCK(object)					\
 	rw_wunlock(&(object)->lock)
+
+struct vnode;
 
 /*
  *	The object must be locked or thread private.
@@ -293,6 +292,17 @@ vm_object_color(vm_object_t object, u_short color)
 	}
 }
 
+static __inline bool
+vm_object_reserv(vm_object_t object)
+{
+
+	if (object != NULL &&
+	    (object->flags & (OBJ_COLORED | OBJ_FICTITIOUS)) == OBJ_COLORED) {
+		return (true);
+	}
+	return (false);
+}
+
 void vm_object_clear_flag(vm_object_t object, u_short bits);
 void vm_object_pip_add(vm_object_t object, short i);
 void vm_object_pip_subtract(vm_object_t object, short i);
@@ -313,6 +323,7 @@ void vm_object_destroy (vm_object_t);
 void vm_object_terminate (vm_object_t);
 void vm_object_set_writeable_dirty (vm_object_t);
 void vm_object_init (void);
+int  vm_object_kvme_type(vm_object_t object, struct vnode **vpp);
 void vm_object_madvise(vm_object_t, vm_pindex_t, vm_pindex_t, int);
 boolean_t vm_object_page_clean(vm_object_t object, vm_ooffset_t start,
     vm_ooffset_t end, int flags);

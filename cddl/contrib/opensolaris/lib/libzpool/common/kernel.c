@@ -32,6 +32,7 @@
 #include <string.h>
 #include <zlib.h>
 #include <libgen.h>
+#include <sys/assfail.h>
 #include <sys/spa.h>
 #include <sys/stat.h>
 #include <sys/processor.h>
@@ -738,6 +739,7 @@ vpanic(const char *fmt, va_list adx)
 	char buf[512];
 	(void) vsnprintf(buf, 512, fmt, adx);
 	assfail(buf, NULL, 0);
+	abort(); /* necessary to make vpanic meet noreturn requirements */
 }
 
 void
@@ -1004,6 +1006,16 @@ kernel_fini(void)
 
 	random_fd = -1;
 	urandom_fd = -1;
+}
+
+/* ARGSUSED */
+uint32_t
+zone_get_hostid(void *zonep)
+{
+	/*
+	 * We're emulating the system's hostid in userland.
+	 */
+	return (strtoul(hw_serial, NULL, 10));
 }
 
 int

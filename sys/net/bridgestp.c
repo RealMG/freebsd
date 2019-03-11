@@ -1,6 +1,8 @@
 /*	$NetBSD: bridgestp.c,v 1.5 2003/11/28 08:56:48 keihan Exp $	*/
 
-/*
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause-NetBSD
+ *
  * Copyright (c) 2000 Jason L. Wright (jason@thought.net)
  * Copyright (c) 2006 Andrew Thompson (thompsa@FreeBSD.org)
  * All rights reserved.
@@ -2020,6 +2022,7 @@ bstp_same_bridgeid(uint64_t id1, uint64_t id2)
 void
 bstp_reinit(struct bstp_state *bs)
 {
+	struct epoch_tracker et;
 	struct bstp_port *bp;
 	struct ifnet *ifp, *mif;
 	u_char *e_addr;
@@ -2040,8 +2043,8 @@ bstp_reinit(struct bstp_state *bs)
 	 * from is part of this bridge, so we can have more than one independent
 	 * bridges in the same STP domain.
 	 */
-	IFNET_RLOCK_NOSLEEP();
-	TAILQ_FOREACH(ifp, &V_ifnet, if_link) {
+	NET_EPOCH_ENTER(et);
+	CK_STAILQ_FOREACH(ifp, &V_ifnet, if_link) {
 		if (ifp->if_type != IFT_ETHER)
 			continue;	/* Not Ethernet */
 
@@ -2060,7 +2063,7 @@ bstp_reinit(struct bstp_state *bs)
 			continue;
 		}
 	}
-	IFNET_RUNLOCK_NOSLEEP();
+	NET_EPOCH_EXIT(et);
 	if (mif == NULL)
 		goto disablestp;
 

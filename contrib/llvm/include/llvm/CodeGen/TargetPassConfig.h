@@ -16,7 +16,7 @@
 
 #include "llvm/Pass.h"
 #include "llvm/Support/CodeGen.h"
-#include <cassert> 
+#include <cassert>
 #include <string>
 
 namespace llvm {
@@ -84,29 +84,40 @@ template <> struct isPodLike<IdentifyingPassPtr> {
 /// This is an ImmutablePass solely for the purpose of exposing CodeGen options
 /// to the internals of other CodeGen passes.
 class TargetPassConfig : public ImmutablePass {
-public:
-  /// Pseudo Pass IDs. These are defined within TargetPassConfig because they
-  /// are unregistered pass IDs. They are only useful for use with
-  /// TargetPassConfig APIs to identify multiple occurrences of the same pass.
-  ///
-
-  /// EarlyTailDuplicate - A clone of the TailDuplicate pass that runs early
-  /// during codegen, on SSA form.
-  static char EarlyTailDuplicateID;
-
-  /// PostRAMachineLICM - A clone of the LICM pass that runs during late machine
-  /// optimization after regalloc.
-  static char PostRAMachineLICMID;
-
 private:
   PassManagerBase *PM = nullptr;
   AnalysisID StartBefore = nullptr;
   AnalysisID StartAfter = nullptr;
   AnalysisID StopBefore = nullptr;
   AnalysisID StopAfter = nullptr;
+
+  unsigned StartBeforeInstanceNum = 0;
+  unsigned StartBeforeCount = 0;
+
+  unsigned StartAfterInstanceNum = 0;
+  unsigned StartAfterCount = 0;
+
+  unsigned StopBeforeInstanceNum = 0;
+  unsigned StopBeforeCount = 0;
+
+  unsigned StopAfterInstanceNum = 0;
+  unsigned StopAfterCount = 0;
+
   bool Started = true;
   bool Stopped = false;
   bool AddingMachinePasses = false;
+
+  /// Set the StartAfter, StartBefore and StopAfter passes to allow running only
+  /// a portion of the normal code-gen pass sequence.
+  ///
+  /// If the StartAfter and StartBefore pass ID is zero, then compilation will
+  /// begin at the normal point; otherwise, clear the Started flag to indicate
+  /// that passes should not be added until the starting pass is seen.  If the
+  /// Stop pass ID is zero, then compilation will continue to the end.
+  ///
+  /// This function expects that at least one of the StartAfter or the
+  /// StartBefore pass IDs is null.
+  void setStartStopPasses();
 
 protected:
   LLVMTargetMachine *TM;
@@ -147,28 +158,19 @@ public:
 
   CodeGenOpt::Level getOptLevel() const;
 
-  /// Set the StartAfter, StartBefore and StopAfter passes to allow running only
-  /// a portion of the normal code-gen pass sequence.
-  ///
-  /// If the StartAfter and StartBefore pass ID is zero, then compilation will
-  /// begin at the normal point; otherwise, clear the Started flag to indicate
-  /// that passes should not be added until the starting pass is seen.  If the
-  /// Stop pass ID is zero, then compilation will continue to the end.
-  ///
-  /// This function expects that at least one of the StartAfter or the
-  /// StartBefore pass IDs is null.
-  void setStartStopPasses(AnalysisID StartBefore, AnalysisID StartAfter,
-                          AnalysisID StopBefore, AnalysisID StopAfter) {
-    assert(!(StartBefore && StartAfter) &&
-           "Start after and start before passes are given");
-    assert(!(StopBefore && StopAfter) &&
-           "Stop after and stop before passed are given");
-    this->StartBefore = StartBefore;
-    this->StartAfter = StartAfter;
-    this->StopBefore = StopBefore;
-    this->StopAfter = StopAfter;
-    Started = (StartAfter == nullptr) && (StartBefore == nullptr);
-  }
+  /// Returns true if one of the `-start-after`, `-start-before`, `-stop-after`
+  /// or `-stop-before` options is set.
+  static bool hasLimitedCodeGenPipeline();
+
+  /// Returns true if none of the `-stop-before` and `-stop-after` options is
+  /// set.
+  static bool willCompleteCodeGenPipeline();
+
+  /// If hasLimitedCodeGenPipeline is true, this method
+  /// returns a string with the name of the options, separated
+  /// by \p Separator that caused this pipeline to be limited.
+  std::string
+  getLimitedCodeGenPipelineReason(const char *Separator = "/") const;
 
   void setDisableVerify(bool Disable) { setOpt(DisableVerify, Disable); }
 
@@ -208,9 +210,6 @@ public:
   /// Return true if the optimized regalloc pipeline is enabled.
   bool getOptimizeRegAlloc() const;
 
-  /// Return true if shrink wrapping is enabled.
-  bool getEnableShrinkWrap() const;
-
   /// Return true if the default global register allocator is in use and
   /// has not be overriden on the command line with '-regalloc=...'
   bool usingDefaultRegAlloc() const;
@@ -219,7 +218,7 @@ public:
   /// representation to the MI representation.
   /// Adds IR based lowering and target specific optimization passes and finally
   /// the core instruction selection passes.
-  /// \returns true if an error occured, false otherwise.
+  /// \returns true if an error occurred, false otherwise.
   bool addISelPasses();
 
   /// Add common target configurable passes that perform LLVM IR to IR
@@ -310,14 +309,10 @@ public:
   /// verification is enabled.
   void addVerifyPass(const std::string &Banner);
 
-  /// Check whether or not GlobalISel should be enabled by default.
-  /// Fallback/abort behavior is controlled via other methods.
-  virtual bool isGlobalISelEnabled() const;
-
   /// Check whether or not GlobalISel should abort on error.
-  /// When this is disable, GlobalISel will fall back on SDISel instead of
+  /// When this is disabled, GlobalISel will fall back on SDISel instead of
   /// erroring out.
-  virtual bool isGlobalISelAbortEnabled() const;
+  bool isGlobalISelAbortEnabled() const;
 
   /// Check whether or not a diagnostic should be emitted when GlobalISel
   /// uses the fallback path. In other words, it will emit a diagnostic
@@ -405,6 +400,13 @@ protected:
   /// This pass may be implemented by targets that want to run passes
   /// immediately before machine code is emitted.
   virtual void addPreEmitPass() { }
+
+  /// Targets may add passes immediately before machine code is emitted in this
+  /// callback. This is called even later than `addPreEmitPass`.
+  // FIXME: Rename `addPreEmitPass` to something more sensible given its actual
+  // position and remove the `2` suffix here as this callback is what
+  // `addPreEmitPass` *should* be but in reality isn't.
+  virtual void addPreEmitPass2() {}
 
   /// Utilities for targets to add passes to the pass manager.
   ///

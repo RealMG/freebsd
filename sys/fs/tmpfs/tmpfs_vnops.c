@@ -1,6 +1,8 @@
 /*	$NetBSD: tmpfs_vnops.c,v 1.39 2007/07/23 15:41:01 jmmv Exp $	*/
 
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-NetBSD
+ *
  * Copyright (c) 2005, 2006 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
@@ -37,16 +39,19 @@
 __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/dirent.h>
 #include <sys/fcntl.h>
+#include <sys/limits.h>
 #include <sys/lockf.h>
 #include <sys/lock.h>
+#include <sys/mount.h>
 #include <sys/namei.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/rwlock.h>
 #include <sys/sched.h>
 #include <sys/stat.h>
-#include <sys/systm.h>
 #include <sys/sysctl.h>
 #include <sys/unistd.h>
 #include <sys/vnode.h>
@@ -518,7 +523,7 @@ tmpfs_write(struct vop_write_args *v)
 	node->tn_status |= TMPFS_NODE_ACCESSED | TMPFS_NODE_MODIFIED |
 	    TMPFS_NODE_CHANGED;
 	if (node->tn_mode & (S_ISUID | S_ISGID)) {
-		if (priv_check_cred(v->a_cred, PRIV_VFS_RETAINSUGID, 0))
+		if (priv_check_cred(v->a_cred, PRIV_VFS_RETAINSUGID))
 			node->tn_mode &= ~(S_ISUID | S_ISGID);
 	}
 	if (error != 0)
@@ -614,8 +619,8 @@ tmpfs_link(struct vop_link_args *v)
 
 	/* Ensure that we do not overflow the maximum number of links imposed
 	 * by the system. */
-	MPASS(node->tn_links <= LINK_MAX);
-	if (node->tn_links == LINK_MAX) {
+	MPASS(node->tn_links <= TMPFS_LINK_MAX);
+	if (node->tn_links == TMPFS_LINK_MAX) {
 		error = EMLINK;
 		goto out;
 	}
@@ -1171,7 +1176,7 @@ tmpfs_symlink(struct vop_symlink_args *v)
 	struct vnode **vpp = v->a_vpp;
 	struct componentname *cnp = v->a_cnp;
 	struct vattr *vap = v->a_vap;
-	char *target = v->a_target;
+	const char *target = v->a_target;
 
 #ifdef notyet /* XXX FreeBSD BUG: kern_symlink is not setting VLNK */
 	MPASS(vap->va_type == VLNK);
@@ -1310,7 +1315,7 @@ tmpfs_reclaim(struct vop_reclaim_args *v)
 	return 0;
 }
 
-static int
+int
 tmpfs_print(struct vop_print_args *v)
 {
 	struct vnode *vp = v->a_vp;
@@ -1333,17 +1338,37 @@ tmpfs_print(struct vop_print_args *v)
 	return 0;
 }
 
-static int
+int
 tmpfs_pathconf(struct vop_pathconf_args *v)
 {
+	struct vnode *vp = v->a_vp;
 	int name = v->a_name;
-	register_t *retval = v->a_retval;
+	long *retval = v->a_retval;
 
 	int error;
 
 	error = 0;
 
 	switch (name) {
+	case _PC_LINK_MAX:
+		*retval = TMPFS_LINK_MAX;
+		break;
+
+	case _PC_NAME_MAX:
+		*retval = NAME_MAX;
+		break;
+
+	case _PC_PIPE_BUF:
+		if (vp->v_type == VDIR || vp->v_type == VFIFO)
+			*retval = PIPE_BUF;
+		else
+			error = EINVAL;
+		break;
+
+	case _PC_CHOWN_RESTRICTED:
+		*retval = 1;
+		break;
+
 	case _PC_NO_TRUNC:
 		*retval = 1;
 		break;
@@ -1353,7 +1378,7 @@ tmpfs_pathconf(struct vop_pathconf_args *v)
 		break;
 
 	case _PC_FILESIZEBITS:
-		*retval = 0; /* XXX Don't know which value should I return. */
+		*retval = 64;
 		break;
 
 	default:

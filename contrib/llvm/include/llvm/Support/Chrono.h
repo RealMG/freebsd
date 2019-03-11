@@ -47,9 +47,31 @@ toTimePoint(std::time_t T) {
   return time_point_cast<seconds>(system_clock::from_time_t(T));
 }
 
+/// Convert a std::time_t + nanoseconds to a TimePoint
+LLVM_ATTRIBUTE_ALWAYS_INLINE inline TimePoint<>
+toTimePoint(std::time_t T, uint32_t nsec) {
+  using namespace std::chrono;
+  return time_point_cast<nanoseconds>(system_clock::from_time_t(T))
+    + nanoseconds(nsec);
+}
+
 } // namespace sys
 
 raw_ostream &operator<<(raw_ostream &OS, sys::TimePoint<> TP);
+
+/// Format provider for TimePoint<>
+///
+/// The options string is a strftime format string, with extensions:
+///   - %L is millis: 000-999
+///   - %f is micros: 000000-999999
+///   - %N is nanos: 000000000 - 999999999
+///
+/// If no options are given, the default format is "%Y-%m-%d %H:%M:%S.%N".
+template <>
+struct format_provider<sys::TimePoint<>> {
+  static void format(const sys::TimePoint<> &TP, llvm::raw_ostream &OS,
+                     StringRef Style);
+};
 
 /// Implementation of format_provider<T> for duration types.
 ///

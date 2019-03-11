@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2012 NetApp, Inc.
  * All rights reserved.
  *
@@ -116,18 +118,14 @@ struct basl_fio {
 };
 
 #define EFPRINTF(...) \
-	err = fprintf(__VA_ARGS__); if (err < 0) goto err_exit;
+	if (fprintf(__VA_ARGS__) < 0) goto err_exit;
 
 #define EFFLUSH(x) \
-	err = fflush(x); if (err != 0) goto err_exit;
+	if (fflush(x) != 0) goto err_exit;
 
 static int
 basl_fwrite_rsdp(FILE *fp)
 {
-	int err;
-
-	err = 0;
-
 	EFPRINTF(fp, "/*\n");
 	EFPRINTF(fp, " * bhyve RSDP template\n");
 	EFPRINTF(fp, " */\n");
@@ -154,10 +152,6 @@ err_exit:
 static int
 basl_fwrite_rsdt(FILE *fp)
 {
-	int err;
-
-	err = 0;
-
 	EFPRINTF(fp, "/*\n");
 	EFPRINTF(fp, " * bhyve RSDT template\n");
 	EFPRINTF(fp, " */\n");
@@ -194,10 +188,6 @@ err_exit:
 static int
 basl_fwrite_xsdt(FILE *fp)
 {
-	int err;
-
-	err = 0;
-
 	EFPRINTF(fp, "/*\n");
 	EFPRINTF(fp, " * bhyve XSDT template\n");
 	EFPRINTF(fp, " */\n");
@@ -234,10 +224,7 @@ err_exit:
 static int
 basl_fwrite_madt(FILE *fp)
 {
-	int err;
 	int i;
-
-	err = 0;
 
 	EFPRINTF(fp, "/*\n");
 	EFPRINTF(fp, " * bhyve MADT template\n");
@@ -269,6 +256,7 @@ basl_fwrite_madt(FILE *fp)
 		EFPRINTF(fp, "[0001]\t\tLocal Apic ID : %02x\n", i);
 		EFPRINTF(fp, "[0004]\t\tFlags (decoded below) : 00000001\n");
 		EFPRINTF(fp, "\t\t\tProcessor Enabled : 1\n");
+		EFPRINTF(fp, "\t\t\tRuntime Online Capable : 0\n");
 		EFPRINTF(fp, "\n");
 	}
 
@@ -324,10 +312,6 @@ err_exit:
 static int
 basl_fwrite_fadt(FILE *fp)
 {
-	int err;
-
-	err = 0;
-
 	EFPRINTF(fp, "/*\n");
 	EFPRINTF(fp, " * bhyve FADT template\n");
 	EFPRINTF(fp, " */\n");
@@ -545,10 +529,6 @@ err_exit:
 static int
 basl_fwrite_hpet(FILE *fp)
 {
-	int err;
-
-	err = 0;
-
 	EFPRINTF(fp, "/*\n");
 	EFPRINTF(fp, " * bhyve HPET template\n");
 	EFPRINTF(fp, " */\n");
@@ -594,8 +574,6 @@ err_exit:
 static int
 basl_fwrite_mcfg(FILE *fp)
 {
-	int err = 0;
-
 	EFPRINTF(fp, "/*\n");
 	EFPRINTF(fp, " * bhyve MCFG template\n");
 	EFPRINTF(fp, " */\n");
@@ -627,10 +605,6 @@ err_exit:
 static int
 basl_fwrite_facs(FILE *fp)
 {
-	int err;
-
-	err = 0;
-
 	EFPRINTF(fp, "/*\n");
 	EFPRINTF(fp, " * bhyve FACS template\n");
 	EFPRINTF(fp, " */\n");
@@ -664,7 +638,6 @@ void
 dsdt_line(const char *fmt, ...)
 {
 	va_list ap;
-	int err;
 
 	if (dsdt_error != 0)
 		return;
@@ -673,8 +646,10 @@ dsdt_line(const char *fmt, ...)
 		if (dsdt_indent_level != 0)
 			EFPRINTF(dsdt_fp, "%*c", dsdt_indent_level * 2, ' ');
 		va_start(ap, fmt);
-		if (vfprintf(dsdt_fp, fmt, ap) < 0)
+		if (vfprintf(dsdt_fp, fmt, ap) < 0) {
+			va_end(ap);
 			goto err_exit;
+		}
 		va_end(ap);
 	}
 	EFPRINTF(dsdt_fp, "\n");
@@ -733,9 +708,6 @@ dsdt_fixed_mem32(uint32_t base, uint32_t length)
 static int
 basl_fwrite_dsdt(FILE *fp)
 {
-	int err;
-
-	err = 0;
 	dsdt_fp = fp;
 	dsdt_error = 0;
 	dsdt_indent_level = 0;
@@ -914,7 +886,7 @@ basl_make_templates(void)
 	int len;
 
 	err = 0;
-	
+
 	/*
 	 * 
 	 */

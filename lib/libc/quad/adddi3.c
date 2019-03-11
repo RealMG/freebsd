@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1992, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -45,8 +47,7 @@ __FBSDID("$FreeBSD$");
  * either x or y (the choice to compare with x or y is arbitrary).
  */
 quad_t
-__adddi3(a, b)
-	quad_t a, b;
+__adddi3(quad_t a, quad_t b)
 {
 	union uu aa, bb, sum;
 

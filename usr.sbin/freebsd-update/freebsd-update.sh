@@ -1,6 +1,8 @@
 #!/bin/sh
 
 #-
+# SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+#
 # Copyright 2004-2007 Colin Percival
 # All rights reserved
 #
@@ -43,7 +45,8 @@ Options:
                   (default: /var/db/freebsd-update/)
   -f conffile  -- Read configuration options from conffile
                   (default: /etc/freebsd-update.conf)
-  -F           -- Force a fetch operation to proceed
+  -F           -- Force a fetch operation to proceed in the
+                  case of an unfinished upgrade
   -k KEY       -- Trust an RSA key with SHA256 hash of KEY
   -r release   -- Target for upgrade (e.g., 11.1-RELEASE)
   -s server    -- Server from which to fetch updates
@@ -219,7 +222,7 @@ config_KeepModifiedMetadata () {
 config_Components () {
 	for C in $@; do
 		if [ "$C" = "src" ]; then
-			if [ -e /usr/src/COPYRIGHT ]; then
+			if [ -e "${BASEDIR}/usr/src/COPYRIGHT" ]; then
 				COMPONENTS="${COMPONENTS} ${C}"
 			else
 				echo "src component not installed, skipped"
@@ -300,6 +303,15 @@ config_TargetRelease () {
 	if echo ${TARGETRELEASE} | grep -qE '^[0-9.]+$'; then
 		TARGETRELEASE="${TARGETRELEASE}-RELEASE"
 	fi
+}
+
+# Pretend current release is FreeBSD $1
+config_SourceRelease () {
+	UNAME_r=$1
+	if echo ${UNAME_r} | grep -qE '^[0-9.]+$'; then
+		UNAME_r="${UNAME_r}-RELEASE"
+	fi
+	export UNAME_r
 }
 
 # Define what happens to output of utilities
@@ -418,6 +430,9 @@ init_params () {
 
 	# Run without a TTY
 	NOTTYOK=0
+
+	# Fetched first in a chain of commands
+	ISFETCHED=0
 }
 
 # Parse the command line
@@ -437,7 +452,8 @@ parse_cmdline () {
 			NOTTYOK=1
 			;;
 		--currently-running)
-			shift; export UNAME_r="$1"
+			shift
+			config_SourceRelease $1 || usage
 			;;
 
 		# Configuration file equivalents
@@ -653,6 +669,24 @@ fetchupgrade_check_params () {
 	FETCHDIR=${RELNUM}/${ARCH}
 	PATCHDIR=${RELNUM}/${ARCH}/bp
 
+	# Disallow upgrade from a version that is not a release
+	case ${RELNUM} in
+	*-RELEASE | *-ALPHA*  | *-BETA* | *-RC*)
+		;;
+	*)
+		echo -n "`basename $0`: "
+		cat <<- EOF
+			Cannot upgrade from a version that is not a release
+			(including alpha, beta and release candidates)
+			using `basename $0`. Instead, FreeBSD can be directly
+			upgraded by source or upgraded to a RELEASE/RELENG version
+			prior to running `basename $0`.
+			Currently running: ${RELNUM}
+		EOF
+		exit 1
+		;;
+	esac
+
 	# Figure out what directory contains the running kernel
 	BOOTFILE=`sysctl -n kern.bootfile`
 	KERNELDIR=${BOOTFILE%/kernel}
@@ -783,8 +817,10 @@ install_check_params () {
 	# Check that we have updates ready to install
 	if ! [ -L ${BDHASH}-install ]; then
 		echo "No updates are available to install."
-		echo "Run '$0 fetch' first."
-		exit 1
+		if [ $ISFETCHED -eq 0 ]; then
+			echo "Run '$0 fetch' first."
+		fi
+		exit 0
 	fi
 	if ! [ -f ${BDHASH}-install/INDEX-OLD ] ||
 	    ! [ -f ${BDHASH}-install/INDEX-NEW ]; then
@@ -987,7 +1023,16 @@ fetch_pick_server () {
 
 # Have we run out of mirrors?
 	if [ `wc -l < serverlist` -eq 0 ]; then
-		echo "No mirrors remaining, giving up."
+		cat <<- EOF
+			No mirrors remaining, giving up.
+
+			This may be because upgrading from this platform (${ARCH})
+			or release (${RELNUM}) is unsupported by `basename $0`. Only
+			platforms with Tier 1 support can be upgraded by `basename $0`.
+			See https://www.freebsd.org/platforms/index.html for more info.
+
+			If unsupported, FreeBSD must be upgraded by source.
+		EOF
 		return 1
 	fi
 
@@ -1047,7 +1092,7 @@ fetch_make_patchlist () {
 				continue
 			fi
 			echo "${X}|${Y}"
-		done | uniq
+		done | sort -u
 }
 
 # Print user-friendly progress statistics
@@ -1881,7 +1926,7 @@ fetch_files () {
 		echo ${NDEBUG} "files... "
 		lam -s "${FETCHDIR}/f/" - -s ".gz" < filelist |
 		    xargs ${XARGST} ${PHTTPGET} ${SERVERNAME}	\
-		    2>${QUIETREDIR}
+			2>${STATSREDIR} | fetch_progress
 
 		while read Y; do
 			if ! [ -f ${Y}.gz ]; then
@@ -1914,13 +1959,12 @@ fetch_create_manifest () {
 
 	# Report to the user if any updates were avoided due to local changes
 	if [ -s modifiedfiles ]; then
-		echo
-		echo -n "The following files are affected by updates, "
-		echo "but no changes have"
-		echo -n "been downloaded because the files have been "
-		echo "modified locally:"
-		cat modifiedfiles
-	fi | $PAGER
+		cat - modifiedfiles <<- EOF | ${PAGER}
+			The following files are affected by updates. No changes have
+			been downloaded, however, because the files have been modified
+			locally:
+		EOF
+	fi
 	rm modifiedfiles
 
 	# If no files will be updated, tell the user and exit
@@ -1946,30 +1990,29 @@ fetch_create_manifest () {
 
 	# Report removed files, if any
 	if [ -s files.removed ]; then
-		echo
-		echo -n "The following files will be removed "
-		echo "as part of updating to ${RELNUM}-p${RELPATCHNUM}:"
-		cat files.removed
-	fi | $PAGER
+		cat - files.removed <<- EOF | ${PAGER}
+			The following files will be removed as part of updating to
+			${RELNUM}-p${RELPATCHNUM}:
+		EOF
+	fi
 	rm files.removed
 
 	# Report added files, if any
 	if [ -s files.added ]; then
-		echo
-		echo -n "The following files will be added "
-		echo "as part of updating to ${RELNUM}-p${RELPATCHNUM}:"
-		cat files.added
-	fi | $PAGER
+		cat - files.added <<- EOF | ${PAGER}
+			The following files will be added as part of updating to
+			${RELNUM}-p${RELPATCHNUM}:
+		EOF
+	fi
 	rm files.added
 
 	# Report updated files, if any
 	if [ -s files.updated ]; then
-		echo
-		echo -n "The following files will be updated "
-		echo "as part of updating to ${RELNUM}-p${RELPATCHNUM}:"
-
-		cat files.updated
-	fi | $PAGER
+		cat - files.updated <<- EOF | ${PAGER}
+			The following files will be updated as part of updating to
+			${RELNUM}-p${RELPATCHNUM}:
+		EOF
+	fi
 	rm files.updated
 
 	# Create a directory for the install manifest.
@@ -2163,7 +2206,7 @@ upgrade_guess_components () {
 		    sort -k 2,2 -t ' ' > compfreq.present
 		join -t ' ' -1 2 -2 2 compfreq.present compfreq.total |
 		    while read S P T; do
-			if [ ${P} -gt `expr ${T} / 2` ]; then
+			if [ ${T} -ne 0 -a ${P} -gt `expr ${T} / 2` ]; then
 				echo ${S}
 			fi
 		    done > comp.present
@@ -2889,16 +2932,28 @@ Kernel updates have been installed.  Please reboot and run
 		install_from_index INDEX-NEW || return 1
 		install_delete INDEX-OLD INDEX-NEW || return 1
 
-		# Rebuild /etc/spwd.db and /etc/pwd.db if necessary.
+		# Rebuild generated pwd files.
 		if [ ${BASEDIR}/etc/master.passwd -nt ${BASEDIR}/etc/spwd.db ] ||
-		    [ ${BASEDIR}/etc/master.passwd -nt ${BASEDIR}/etc/pwd.db ]; then
-			pwd_mkdb -d ${BASEDIR}/etc ${BASEDIR}/etc/master.passwd
+		    [ ${BASEDIR}/etc/master.passwd -nt ${BASEDIR}/etc/pwd.db ] ||
+		    [ ${BASEDIR}/etc/master.passwd -nt ${BASEDIR}/etc/passwd ]; then
+			pwd_mkdb -d ${BASEDIR}/etc -p ${BASEDIR}/etc/master.passwd
 		fi
 
 		# Rebuild /etc/login.conf.db if necessary.
 		if [ ${BASEDIR}/etc/login.conf -nt ${BASEDIR}/etc/login.conf.db ]; then
 			cap_mkdb ${BASEDIR}/etc/login.conf
 		fi
+
+		# Rebuild man page databases, if necessary.
+		for D in /usr/share/man /usr/share/openssl/man; do
+			if [ ! -d ${BASEDIR}/$D ]; then
+				continue
+			fi
+			if [ -z "$(find ${BASEDIR}/$D -type f -newer ${BASEDIR}/$D/mandoc.db)" ]; then
+				continue;
+			fi
+			makewhatis ${BASEDIR}/$D
+		done
 
 		# We've finished installing the world and deleting old files
 		# which are not shared libraries.
@@ -3241,6 +3296,7 @@ cmd_fetch () {
 	fi
 	fetch_check_params
 	fetch_run || exit 1
+	ISFETCHED=1
 }
 
 # Cron command.  Make sure the parameters are sensible; wait
@@ -3292,7 +3348,7 @@ export PATH=/sbin:/bin:/usr/sbin:/usr/bin:${PATH}
 
 # Set a pager if the user doesn't
 if [ -z "$PAGER" ]; then
-	PAGER=/usr/bin/more
+	PAGER=/usr/bin/less
 fi
 
 # Set LC_ALL in order to avoid problems with character ranges like [A-Z].

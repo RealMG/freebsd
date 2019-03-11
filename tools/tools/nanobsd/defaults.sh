@@ -388,7 +388,7 @@ install_world ( ) (
 	nano_make_install_env
 	set -o xtrace
 	cd "${NANO_SRC}"
-	${NANO_MAKE} installworld DESTDIR="${NANO_WORLDDIR}"
+	${NANO_MAKE} installworld DESTDIR="${NANO_WORLDDIR}" DB_FROM_SRC=yes
 	chflags -R noschg "${NANO_WORLDDIR}"
 	) > ${NANO_LOG}/_.iw 2>&1
 )
@@ -401,7 +401,7 @@ install_etc ( ) (
 	nano_make_install_env
 	set -o xtrace
 	cd "${NANO_SRC}"
-	${NANO_MAKE} distribution DESTDIR="${NANO_WORLDDIR}"
+	${NANO_MAKE} distribution DESTDIR="${NANO_WORLDDIR}" DB_FROM_SRC=yes
 	# make.conf doesn't get created by default, but some ports need it
 	# so they can spam it.
 	cp /dev/null "${NANO_WORLDDIR}"/etc/make.conf
@@ -424,7 +424,7 @@ install_kernel ( ) (
 
 	set -o xtrace
 	cd "${NANO_SRC}"
-	${NANO_MAKE} installkernel DESTDIR="${NANO_WORLDDIR}"
+	${NANO_MAKE} installkernel DESTDIR="${NANO_WORLDDIR}" DB_FROM_SRC=yes
 
 	) > ${NANO_LOG}/_.ik 2>&1
 )
@@ -438,7 +438,8 @@ native_xtools ( ) (
 	nano_make_install_env
 	set -o xtrace
 	cd "${NANO_SRC}"
-	${NANO_MAKE} native-xtools DESTDIR="${NANO_WORLDDIR}"
+	${NANO_MAKE} native-xtools
+	${NANO_MAKE} native-xtools-install DESTDIR="${NANO_WORLDDIR}"
 
 	) > ${NANO_LOG}/_.native_xtools 2>&1
 )
@@ -749,7 +750,7 @@ cust_install_files ( ) (
 cust_pkgng ( ) (
 	mkdir -p ${NANO_WORLDDIR}/usr/local/etc
 	local PKG_CONF="${NANO_WORLDDIR}/usr/local/etc/pkg.conf"
-	local PKGCMD="env ASSUME_ALWAYS_YES=YES PKG_DBDIR=${NANO_PKG_META_BASE}/pkg SIGNATURE_TYPE=none /usr/sbin/pkg"
+	local PKGCMD="env BATCH=YES ASSUME_ALWAYS_YES=YES PKG_DBDIR=${NANO_PKG_META_BASE}/pkg SIGNATURE_TYPE=none /usr/sbin/pkg"
 
 	# Ensure pkg.conf points pkg to where the package meta data lives.
 	touch ${PKG_CONF}

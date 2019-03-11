@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1991 Regents of the University of California.
  * All rights reserved.
  *
@@ -125,5 +127,12 @@ SYSCTL_DECL(_debug_pmap_stats);
 #define	PMAP_STATS_INC(var)
 
 #endif
+
+static inline int
+pmap_vmspace_copy(pmap_t dst_pmap __unused, pmap_t src_pmap __unused)
+{
+
+	return (0);
+}
 
 #endif /* !_MACHINE_PMAP_H_ */

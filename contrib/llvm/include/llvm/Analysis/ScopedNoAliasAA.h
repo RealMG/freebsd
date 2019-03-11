@@ -6,21 +6,26 @@
 // License. See LICENSE.TXT for details.
 //
 //===----------------------------------------------------------------------===//
+//
 /// \file
 /// This is the interface for a metadata-based scoped no-alias analysis.
-///
+//
 //===----------------------------------------------------------------------===//
 
 #ifndef LLVM_ANALYSIS_SCOPEDNOALIASAA_H
 #define LLVM_ANALYSIS_SCOPEDNOALIASAA_H
 
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/Metadata.h"
-#include "llvm/IR/Module.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/PassManager.h"
 #include "llvm/Pass.h"
+#include <memory>
 
 namespace llvm {
+
+class Function;
+class MDNode;
+class MemoryLocation;
 
 /// A simple AA result which uses scoped-noalias metadata to answer queries.
 class ScopedNoAliasAAResult : public AAResultBase<ScopedNoAliasAAResult> {
@@ -36,8 +41,8 @@ public:
   }
 
   AliasResult alias(const MemoryLocation &LocA, const MemoryLocation &LocB);
-  ModRefInfo getModRefInfo(ImmutableCallSite CS, const MemoryLocation &Loc);
-  ModRefInfo getModRefInfo(ImmutableCallSite CS1, ImmutableCallSite CS2);
+  ModRefInfo getModRefInfo(const CallBase *Call, const MemoryLocation &Loc);
+  ModRefInfo getModRefInfo(const CallBase *Call1, const CallBase *Call2);
 
 private:
   bool mayAliasInScopes(const MDNode *Scopes, const MDNode *NoAlias) const;
@@ -46,10 +51,11 @@ private:
 /// Analysis pass providing a never-invalidated alias analysis result.
 class ScopedNoAliasAA : public AnalysisInfoMixin<ScopedNoAliasAA> {
   friend AnalysisInfoMixin<ScopedNoAliasAA>;
+
   static AnalysisKey Key;
 
 public:
-  typedef ScopedNoAliasAAResult Result;
+  using Result = ScopedNoAliasAAResult;
 
   ScopedNoAliasAAResult run(Function &F, FunctionAnalysisManager &AM);
 };
@@ -77,6 +83,7 @@ public:
 // scoped noalias analysis.
 //
 ImmutablePass *createScopedNoAliasAAWrapperPass();
-}
 
-#endif
+} // end namespace llvm
+
+#endif // LLVM_ANALYSIS_SCOPEDNOALIASAA_H

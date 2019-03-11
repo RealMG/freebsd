@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1986, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -47,7 +49,6 @@ struct	arphdr {
 	u_short	ar_hrd;		/* format of hardware address */
 #define ARPHRD_ETHER 	1	/* ethernet hardware format */
 #define ARPHRD_IEEE802	6	/* token-ring hardware format */
-#define ARPHRD_ARCNET	7	/* arcnet hardware format */
 #define ARPHRD_FRELAY 	15	/* frame relay hardware format */
 #define ARPHRD_IEEE1394	24	/* firewire hardware format */
 #define ARPHRD_INFINIBAND 32	/* infiniband hardware format */
@@ -104,8 +105,9 @@ struct arpstat {
 	uint64_t rxrequests;	/* # of ARP requests received by this host. */
 	uint64_t rxreplies;	/* # of ARP replies received by this host. */
 	uint64_t received;	/* # of ARP packets received by this host. */
+	uint64_t txerrors;	/* # of ARP requests failed to send. */
 
-	uint64_t arp_spares[4];	/* For either the upper or lower half. */
+	uint64_t arp_spares[3];	/* For either the upper or lower half. */
 	/* Abnormal event and error  counting: */
 	uint64_t dropped;	/* # of packets dropped waiting for a reply. */
 	uint64_t timeouts;	/* # of times with entries removed */

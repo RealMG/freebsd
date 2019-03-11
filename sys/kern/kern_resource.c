@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1982, 1986, 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
  * (c) UNIX System Laboratories, Inc.
@@ -36,8 +38,6 @@
 
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
-
-#include "opt_compat.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -863,6 +863,90 @@ rufetchtd(struct thread *td, struct rusage *ru)
 	calcru1(p, &td->td_rux, &ru->ru_utime, &ru->ru_stime);
 }
 
+/* XXX: the MI version is too slow to use: */
+#ifndef __HAVE_INLINE_FLSLL
+#define	flsll(x)	(fls((x) >> 32) != 0 ? fls((x) >> 32) + 32 : fls(x))
+#endif
+
+static uint64_t
+mul64_by_fraction(uint64_t a, uint64_t b, uint64_t c)
+{
+	uint64_t acc, bh, bl;
+	int i, s, sa, sb;
+
+	/*
+	 * Calculate (a * b) / c accurately enough without overflowing.  c
+	 * must be nonzero, and its top bit must be 0.  a or b must be
+	 * <= c, and the implementation is tuned for b <= c.
+	 *
+	 * The comments about times are for use in calcru1() with units of
+	 * microseconds for 'a' and stathz ticks at 128 Hz for b and c.
+	 *
+	 * Let n be the number of top zero bits in c.  Each iteration
+	 * either returns, or reduces b by right shifting it by at least n.
+	 * The number of iterations is at most 1 + 64 / n, and the error is
+	 * at most the number of iterations.
+	 *
+	 * It is very unusual to need even 2 iterations.  Previous
+	 * implementations overflowed essentially by returning early in the
+	 * first iteration, with n = 38 giving overflow at 105+ hours and
+	 * n = 32 giving overlow at at 388+ days despite a more careful
+	 * calculation.  388 days is a reasonable uptime, and the calculation
+	 * needs to work for the uptime times the number of CPUs since 'a'
+	 * is per-process.
+	 */
+	if (a >= (uint64_t)1 << 63)
+		return (0);		/* Unsupported arg -- can't happen. */
+	acc = 0;
+	for (i = 0; i < 128; i++) {
+		sa = flsll(a);
+		sb = flsll(b);
+		if (sa + sb <= 64)
+			/* Up to 105 hours on first iteration. */
+			return (acc + (a * b) / c);
+		if (a >= c) {
+			/*
+			 * This reduction is based on a = q * c + r, with the
+			 * remainder r < c.  'a' may be large to start, and
+			 * moving bits from b into 'a' at the end of the loop
+			 * sets the top bit of 'a', so the reduction makes
+			 * significant progress.
+			 */
+			acc += (a / c) * b;
+			a %= c;
+			sa = flsll(a);
+			if (sa + sb <= 64)
+				/* Up to 388 days on first iteration. */
+				return (acc + (a * b) / c);
+		}
+
+		/*
+		 * This step writes a * b as a * ((bh << s) + bl) =
+		 * a * (bh << s) + a * bl = (a << s) * bh + a * bl.  The 2
+		 * additive terms are handled separately.  Splitting in
+		 * this way is linear except for rounding errors.
+		 *
+		 * s = 64 - sa is the maximum such that a << s fits in 64
+		 * bits.  Since a < c and c has at least 1 zero top bit,
+		 * sa < 64 and s > 0.  Thus this step makes progress by
+		 * reducing b (it increases 'a', but taking remainders on
+		 * the next iteration completes the reduction).
+		 *
+		 * Finally, the choice for s is just what is needed to keep
+		 * a * bl from overflowing, so we don't need complications
+		 * like a recursive call mul64_by_fraction(a, bl, c) to
+		 * handle the second additive term.
+		 */
+		s = 64 - sa;
+		bh = b >> s;
+		bl = b - (bh << s);
+		acc += (a * bl) / c;
+		a <<= s;
+		b = bh;
+	}
+	return (0);		/* Algorithm failure -- can't happen. */
+}
+
 static void
 calcru1(struct proc *p, struct rusage_ext *ruxp, struct timeval *up,
     struct timeval *sp)
@@ -887,15 +971,23 @@ calcru1(struct proc *p, struct rusage_ext *ruxp, struct timeval *up,
 		tu = ruxp->rux_tu;
 	}
 
+	/* Subdivide tu.  Avoid overflow in the multiplications. */
+	if (__predict_true(tu <= ((uint64_t)1 << 38) && tt <= (1 << 26))) {
+		/* Up to 76 hours when stathz is 128. */
+		uu = (tu * ut) / tt;
+		su = (tu * st) / tt;
+	} else {
+		uu = mul64_by_fraction(tu, ut, tt);
+		su = mul64_by_fraction(tu, ut, st);
+	}
+
 	if (tu >= ruxp->rux_tu) {
 		/*
 		 * The normal case, time increased.
 		 * Enforce monotonicity of bucketed numbers.
 		 */
-		uu = (tu * ut) / tt;
 		if (uu < ruxp->rux_uu)
 			uu = ruxp->rux_uu;
-		su = (tu * st) / tt;
 		if (su < ruxp->rux_su)
 			su = ruxp->rux_su;
 	} else if (tu + 3 > ruxp->rux_tu || 101 * tu > 100 * ruxp->rux_tu) {
@@ -924,8 +1016,6 @@ calcru1(struct proc *p, struct rusage_ext *ruxp, struct timeval *up,
 		    "to %ju usec for pid %d (%s)\n",
 		    (uintmax_t)ruxp->rux_tu, (uintmax_t)tu,
 		    p->p_pid, p->p_comm);
-		uu = (tu * ut) / tt;
-		su = (tu * st) / tt;
 	}
 
 	ruxp->rux_uu = uu;
@@ -1168,7 +1258,7 @@ lim_max_proc(struct proc *p, int which)
  * The which parameter which specifies the index into the rlimit array
  */
 rlim_t
-lim_cur(struct thread *td, int which)
+(lim_cur)(struct thread *td, int which)
 {
 	struct rlimit rl;
 
@@ -1253,6 +1343,18 @@ struct uidinfo *
 uifind(uid_t uid)
 {
 	struct uidinfo *new_uip, *uip;
+	struct ucred *cred;
+
+	cred = curthread->td_ucred;
+	if (cred->cr_uidinfo->ui_uid == uid) {
+		uip = cred->cr_uidinfo;
+		uihold(uip);
+		return (uip);
+	} else if (cred->cr_ruidinfo->ui_uid == uid) {
+		uip = cred->cr_ruidinfo;
+		uihold(uip);
+		return (uip);
+	}
 
 	rw_rlock(&uihashtbl_lock);
 	uip = uilookup(uid);
@@ -1264,7 +1366,6 @@ uifind(uid_t uid)
 	racct_create(&new_uip->ui_racct);
 	refcount_init(&new_uip->ui_ref, 1);
 	new_uip->ui_uid = uid;
-	mtx_init(&new_uip->ui_vmsize_mtx, "ui_vmsize", NULL, MTX_DEF);
 
 	rw_wlock(&uihashtbl_lock);
 	/*
@@ -1279,7 +1380,6 @@ uifind(uid_t uid)
 	} else {
 		rw_wunlock(&uihashtbl_lock);
 		racct_destroy(&new_uip->ui_racct);
-		mtx_destroy(&new_uip->ui_vmsize_mtx);
 		free(new_uip, M_UIDINFO);
 	}
 	return (uip);
@@ -1313,14 +1413,10 @@ uihold(struct uidinfo *uip)
 void
 uifree(struct uidinfo *uip)
 {
-	int old;
 
-	/* Prepare for optimal case. */
-	old = uip->ui_ref;
-	if (old > 1 && atomic_cmpset_int(&uip->ui_ref, old, old - 1))
+	if (refcount_release_if_not_last(&uip->ui_ref))
 		return;
 
-	/* Prepare for suboptimal case. */
 	rw_wlock(&uihashtbl_lock);
 	if (refcount_release(&uip->ui_ref) == 0) {
 		rw_wunlock(&uihashtbl_lock);
@@ -1340,7 +1436,6 @@ uifree(struct uidinfo *uip)
 	if (uip->ui_vmsize != 0)
 		printf("freeing uidinfo: uid = %d, swapuse = %lld\n",
 		    uip->ui_uid, (unsigned long long)uip->ui_vmsize);
-	mtx_destroy(&uip->ui_vmsize_mtx);
 	free(uip, M_UIDINFO);
 }
 
@@ -1370,18 +1465,17 @@ ui_racct_foreach(void (*callback)(struct racct *racct,
 static inline int
 chglimit(struct uidinfo *uip, long *limit, int diff, rlim_t max, const char *name)
 {
+	long new;
 
 	/* Don't allow them to exceed max, but allow subtraction. */
+	new = atomic_fetchadd_long(limit, (long)diff) + diff;
 	if (diff > 0 && max != 0) {
-		if (atomic_fetchadd_long(limit, (long)diff) + diff > max) {
+		if (new < 0 || new > max) {
 			atomic_subtract_long(limit, (long)diff);
 			return (0);
 		}
-	} else {
-		atomic_add_long(limit, (long)diff);
-		if (*limit < 0)
-			printf("negative %s for uid = %d\n", name, uip->ui_uid);
-	}
+	} else if (new < 0)
+		printf("negative %s for uid = %d\n", name, uip->ui_uid);
 	return (1);
 }
 

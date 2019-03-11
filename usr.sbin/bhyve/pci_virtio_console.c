@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2016 iXsystems Inc.
  * All rights reserved.
  *
@@ -41,6 +43,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#ifndef WITHOUT_CAPSICUM
+#include <capsicum_helpers.h>
+#endif
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -306,7 +311,7 @@ pci_vtcon_sock_add(struct pci_vtcon_softc *sc, const char *name,
 	sun.sun_family = AF_UNIX;
 	sun.sun_len = sizeof(struct sockaddr_un);
 	strcpy(pathcopy, path);
-	strncpy(sun.sun_path, basename(pathcopy), sizeof(sun.sun_path));
+	strlcpy(sun.sun_path, basename(pathcopy), sizeof(sun.sun_path));
 	free(pathcopy);
 
 	if (bindat(fd, s, (struct sockaddr *)&sun, sun.sun_len) < 0) {
@@ -326,7 +331,7 @@ pci_vtcon_sock_add(struct pci_vtcon_softc *sc, const char *name,
 
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_init(&rights, CAP_ACCEPT, CAP_EVENT, CAP_READ, CAP_WRITE);
-	if (cap_rights_limit(s, &rights) == -1 && errno != ENOSYS)
+	if (caph_rights_limit(s, &rights) == -1)
 		errx(EX_OSERR, "Unable to apply rights for sandbox");
 #endif
 
@@ -579,6 +584,7 @@ pci_vtcon_notify_tx(void *vsc, struct vqueue_info *vq)
 
 	while (vq_has_descs(vq)) {
 		n = vq_getchain(vq, &idx, iov, 1, flags);
+		assert(n >= 1);
 		if (port != NULL)
 			port->vsp_cb(port, port->vsp_arg, iov, 1);
 
@@ -650,7 +656,7 @@ pci_vtcon_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
 
 	while ((opt = strsep(&opts, ",")) != NULL) {
 		portname = strsep(&opt, "=");
-		portpath = strdup(opt);
+		portpath = opt;
 
 		/* create port */
 		if (pci_vtcon_sock_add(sc, portname, portpath) < 0) {

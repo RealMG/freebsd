@@ -43,7 +43,6 @@ __FBSDID("$FreeBSD$");
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/resource.h>
-#include <sys/wait.h> /* For WIFSIGNALED(status) */
 #include <errno.h>
 
 /*
@@ -467,12 +466,9 @@ evalredir(union node *n, int flags)
 		handler = savehandler;
 		e = exception;
 		popredir();
-		if (e == EXERROR || e == EXEXEC) {
-			if (in_redirect) {
-				exitstatus = 2;
-				FORCEINTON;
-				return;
-			}
+		if (e == EXERROR && in_redirect) {
+			FORCEINTON;
+			return;
 		}
 		longjmp(handler->loc, 1);
 	} else {
@@ -506,7 +502,7 @@ exphere(union node *redir, struct arglist *fn)
 	forcelocal++;
 	savehandler = handler;
 	if (setjmp(jmploc.loc))
-		need_longjmp = exception != EXERROR && exception != EXEXEC;
+		need_longjmp = exception != EXERROR;
 	else {
 		handler = &jmploc;
 		expandarg(redir->nhere.doc, fn, 0);
@@ -670,8 +666,8 @@ evalbackcmd(union node *n, struct backcmd *result)
 		forcelocal++;
 		savehandler = handler;
 		if (setjmp(jmploc.loc)) {
-			if (exception == EXERROR || exception == EXEXEC)
-				exitstatus = 2;
+			if (exception == EXERROR)
+				/* nothing */;
 			else if (exception != 0) {
 				handler = savehandler;
 				forcelocal--;
@@ -840,7 +836,7 @@ evalcommand(union node *cmd, int flags, struct backcmd *backcmd)
 	struct parsefile *savetopfile;
 	volatile int e;
 	char *lastarg;
-	int realstatus;
+	int signaled;
 	int do_clearcmdentry;
 	const char *path = pathval();
 	int i;
@@ -1090,8 +1086,6 @@ evalcommand(union node *cmd, int flags, struct backcmd *backcmd)
 			e = exception;
 			if (e == EXINT)
 				exitstatus = SIGINT+128;
-			else if (e != EXEXIT)
-				exitstatus = 2;
 			goto cmddone;
 		}
 		handler = &jmploc;
@@ -1140,8 +1134,7 @@ cmddone:
 		if (cmdentry.u.index != EXECCMD)
 			popredir();
 		if (e != -1) {
-			if ((e != EXERROR && e != EXEXEC)
-			    || cmdentry.special)
+			if (e != EXERROR || cmdentry.special)
 				exraise(e);
 			popfilesupto(savetopfile);
 			if (flags != EV_BACKCMD)
@@ -1163,9 +1156,9 @@ cmddone:
 parent:	/* parent process gets here (if we forked) */
 	if (mode == FORK_FG) {	/* argument to fork */
 		INTOFF;
-		exitstatus = waitforjob(jp, &realstatus);
+		exitstatus = waitforjob(jp, &signaled);
 		INTON;
-		if (iflag && loopnest > 0 && WIFSIGNALED(realstatus)) {
+		if (iflag && loopnest > 0 && signaled) {
 			evalskip = SKIPBREAK;
 			skipcount = loopnest;
 		}

@@ -14,6 +14,7 @@ MKMODULESENV+=	DESTDIR="${DESTDIR}"
 .endif
 SYSDIR?= ${S:C;^[^/];${.CURDIR}/&;:tA}
 MKMODULESENV+=	KERNBUILDDIR="${.CURDIR}" SYSDIR="${SYSDIR}"
+MKMODULESENV+=  MODULE_TIED=yes
 
 .if defined(CONF_CFLAGS)
 MKMODULESENV+=	CONF_CFLAGS="${CONF_CFLAGS}"
@@ -27,6 +28,14 @@ MKMODULESENV+=	WITH_CTF="${WITH_CTF}"
 MKMODULESENV+=	WITH_EXTRA_TCP_STACKS="${WITH_EXTRA_TCP_STACKS}"
 .endif
 
+.if defined(SAN_CFLAGS)
+MKMODULESENV+=	SAN_CFLAGS="${SAN_CFLAGS}"
+.endif
+
+.if defined(GCOV_CFLAGS)
+MKMODULESENV+=	GCOV_CFLAGS="${GCOV_CFLAGS}"
+.endif
+
 # Allow overriding the kernel debug directory, so kernel and user debug may be
 # installed in different directories. Setting it to "" restores the historical
 # behavior of installing debug files in the kernel directory.
@@ -34,14 +43,33 @@ KERN_DEBUGDIR?=	${DEBUGDIR}
 
 .MAIN: all
 
+.if !defined(NO_MODULES)
+# Default prefix used for modules installed from ports
+LOCALBASE?=	/usr/local
+
+LOCAL_MODULES_DIR?= ${LOCALBASE}/sys/modules
+
+# Default to installing all modules installed by ports unless overridden
+# by the user.
+.if !defined(LOCAL_MODULES) && exists($LOCAL_MODULES_DIR)
+LOCAL_MODULES!= ls ${LOCAL_MODULES_DIR}
+.endif
+.endif
+
 .for target in all clean cleandepend cleandir clobber depend install \
     ${_obj} reinstall tags
 ${target}: kernel-${target}
-.if !defined(MODULES_WITH_WORLD) && !defined(NO_MODULES) && exists($S/modules)
+.if !defined(NO_MODULES)
 ${target}: modules-${target}
 modules-${target}:
+.if !defined(MODULES_WITH_WORLD) && exists($S/modules)
 	cd $S/modules; ${MKMODULESENV} ${MAKE} \
 	    ${target:S/^reinstall$/install/:S/^clobber$/cleandir/}
+.endif
+.for module in ${LOCAL_MODULES}
+	cd ${LOCAL_MODULES_DIR}/${module}; ${MKMODULESENV} ${MAKE} \
+	    ${target:S/^reinstall$/install/:S/^clobber$/cleandir/}
+.endfor
 .endif
 .endfor
 
@@ -50,8 +78,6 @@ modules-${target}:
 #
 # The ports tree needs some environment variables defined to match the new kernel
 #
-# Ports search for some dependencies in PATH, so add the location of the installed files
-LOCALBASE?=	/usr/local
 # SRC_BASE is how the ports tree refers to the location of the base source files
 .if !defined(SRC_BASE)
 SRC_BASE=	${SYSDIR:H:tA}
@@ -63,12 +89,20 @@ OSRELDATE!=	awk '/^\#define[[:space:]]*__FreeBSD_version/ { print $$3 }' \
 		    ${MAKEOBJDIRPREFIX}${SRC_BASE}/include/osreldate.h
 .endif
 # Keep the related ports builds in the obj directory so that they are only rebuilt once per kernel build
+#
+# Ports search for some dependencies in PATH, so add the location of the
+# installed files
 WRKDIRPREFIX?=	${.OBJDIR}
 PORTSMODULESENV=\
 	env \
 	-u CC \
 	-u CXX \
 	-u CPP \
+	-u MAKESYSPATH \
+	-u MK_AUTO_OBJ \
+	-u MAKEOBJDIR \
+	MAKEFLAGS="${MAKEFLAGS:M*:tW:S/^-m /-m_/g:S/ -m / -m_/g:tw:N-m_*:NMK_AUTO_OBJ=*}" \
+	SYSDIR=${SYSDIR} \
 	PATH=${PATH}:${LOCALBASE}/bin:${LOCALBASE}/sbin \
 	SRC_BASE=${SRC_BASE} \
 	OSVERSION=${OSRELDATE} \
@@ -87,7 +121,7 @@ ${__target}: ports-${__target}
 ports-${__target}:
 .for __i in ${PORTS_MODULES}
 	@${ECHO} "===> Ports module ${__i} (${__target})"
-	cd $${PORTSDIR:-/usr/ports}/${__i}; ${PORTSMODULESENV} ${MAKE} -B ${__target:C/install/deinstall reinstall/:C/reinstall/deinstall reinstall/}
+	cd $${PORTSDIR:-/usr/ports}/${__i}; ${PORTSMODULESENV} ${MAKE} -B ${__target:C/(re)?install/deinstall reinstall/}
 .endfor
 .endfor
 .endif
@@ -104,7 +138,7 @@ kernel-clobber:
 
 kernel-obj:
 
-.if !defined(MODULES_WITH_WORLD) && !defined(NO_MODULES) && exists($S/modules)
+.if !defined(NO_MODULES)
 modules: modules-all
 
 .if !defined(NO_MODULES_OBJ)
@@ -151,9 +185,8 @@ ${FULLKERNEL}: ${SYSTEM_DEP} vers.o
 .endif
 	${SYSTEM_LD_TAIL}
 
-OBJS_DEPEND_GUESS+=	assym.s vnode_if.h ${BEFORE_DEPEND:M*.h} \
+OBJS_DEPEND_GUESS+=	offset.inc assym.inc vnode_if.h ${BEFORE_DEPEND:M*.h} \
 			${MFILES:T:S/.m$/.h/}
-LNFILES=	${CFILES:T:S/.c$/.ln/}
 
 .for mfile in ${MFILES}
 # XXX the low quality .m.o rules gnerated by config are normally used
@@ -167,14 +200,10 @@ ${mfile:T:S/.m$/.h/}: ${mfile}
 kernel-clean:
 	rm -f *.o *.so *.pico *.ko *.s eddep errs \
 	    ${FULLKERNEL} ${KERNEL_KO} ${KERNEL_KO}.debug \
-	    linterrs tags vers.c \
+	    tags vers.c \
 	    vnode_if.c vnode_if.h vnode_if_newproto.h vnode_if_typedef.h \
 	    ${MFILES:T:S/.m$/.c/} ${MFILES:T:S/.m$/.h/} \
 	    ${CLEAN}
-
-lint: ${LNFILES}
-	${LINT} ${LINTKERNFLAGS} ${CFLAGS:M-[DILU]*} ${.ALLSRC} 2>&1 | \
-	    tee -a linterrs
 
 # This is a hack.  BFD "optimizes" away dynamic mode if there are no
 # dynamic references.  We could probably do a '-Bforcedynamic' mode like
@@ -185,13 +214,27 @@ hack.pico: Makefile
 	${CC} ${HACK_EXTRA_FLAGS} -nostdlib hack.c -o hack.pico
 	rm -f hack.c
 
-assym.s: $S/kern/genassym.sh genassym.o
+offset.inc: $S/kern/genoffset.sh genoffset.o
+	NM='${NM}' NMFLAGS='${NMFLAGS}' sh $S/kern/genoffset.sh genoffset.o > ${.TARGET}
+
+genoffset.o: $S/kern/genoffset.c
+	${CC} -c ${CFLAGS:N-flto:N-fno-common} $S/kern/genoffset.c
+
+# genoffset_test.o is not actually used for anything - the point of compiling it
+# is to exercise the CTASSERT that checks that the offsets in the offset.inc
+# _lite struct(s) match those in the original(s). 
+genoffset_test.o: $S/kern/genoffset.c offset.inc
+	${CC} -c ${CFLAGS:N-flto:N-fno-common} -DOFFSET_TEST \
+	    $S/kern/genoffset.c -o ${.TARGET}
+
+assym.inc: $S/kern/genassym.sh genassym.o genoffset_test.o
 	NM='${NM}' NMFLAGS='${NMFLAGS}' sh $S/kern/genassym.sh genassym.o > ${.TARGET}
 
-genassym.o: $S/$M/$M/genassym.c
+genassym.o: $S/$M/$M/genassym.c  offset.inc
 	${CC} -c ${CFLAGS:N-flto:N-fno-common} $S/$M/$M/genassym.c
 
-${SYSTEM_OBJS} genassym.o vers.o: opt_global.h
+OBJS_DEPEND_GUESS+= opt_global.h
+genoffset.o genassym.o vers.o: opt_global.h
 
 .if !empty(.MAKE.MODE:Unormal:Mmeta) && empty(.MAKE.MODE:Unormal:Mnofilemon)
 _meta_filemon=	1
@@ -201,7 +244,9 @@ _meta_filemon=	1
 # Also skip generating or including .depend.* files if in meta+filemon mode
 # since it will track dependencies itself.  OBJS_DEPEND_GUESS is still used
 # for _meta_filemon but not for _SKIP_DEPEND.
-.if !defined(NO_SKIP_DEPEND) && (make(*obj) || \
+.if !defined(NO_SKIP_DEPEND) && \
+    ((!empty(.MAKEFLAGS:M-V) && empty(.MAKEFLAGS:M*DEP*)) || \
+    ${.TARGETS:M*obj} == ${.TARGETS} || \
     ${.TARGETS:M*clean*} == ${.TARGETS} || \
     ${.TARGETS:M*install*} == ${.TARGETS})
 _SKIP_DEPEND=	1
@@ -211,12 +256,12 @@ _SKIP_DEPEND=	1
 .endif
 
 kernel-depend: .depend
-SRCS=	assym.s vnode_if.h ${BEFORE_DEPEND} ${CFILES} \
+SRCS=	assym.inc offset.inc vnode_if.h ${BEFORE_DEPEND} ${CFILES} \
 	${SYSTEM_CFILES} ${GEN_CFILES} ${SFILES} \
 	${MFILES:T:S/.m$/.h/}
-DEPENDFILES=	.depend .depend.*
-DEPENDOBJS+=	${SYSTEM_OBJS} genassym.o
-DEPENDFILES_OBJS=	${DEPENDOBJS:O:u:C/^/.depend./}
+DEPENDOBJS+=	${SYSTEM_OBJS} genassym.o genoffset.o genoffset_test.o
+DEPENDOBJS+=	${CLEAN:M*.o}
+DEPENDFILES=	${DEPENDOBJS:O:u:C/^/.depend./}
 .if ${MAKE_VERSION} < 20160220
 DEPEND_MP?=	-MP
 .endif
@@ -225,9 +270,8 @@ DEPEND_MP?=	-MP
 ${DEPENDOBJS}:	.NOMETA
 .depend:	.NOMETA
 # Unset these to avoid looping/statting on them later.
-.undef DEPENDSRCS
 .undef DEPENDOBJS
-.undef DEPENDFILES_OBJS
+.undef DEPENDFILES
 .endif	# defined(_SKIP_DEPEND)
 DEPEND_CFLAGS+=	-MD ${DEPEND_MP} -MF.depend.${.TARGET}
 DEPEND_CFLAGS+=	-MT${.TARGET}
@@ -238,7 +282,7 @@ DEPEND_CFLAGS+=	-MT${.TARGET}
 DEPEND_CFLAGS_CONDITION= "${DEPENDOBJS:M${.TARGET}}" != ""
 CFLAGS+=	${${DEPEND_CFLAGS_CONDITION}:?${DEPEND_CFLAGS}:}
 .endif
-.for __depend_obj in ${DEPENDFILES_OBJS}
+.for __depend_obj in ${DEPENDFILES}
 .if ${MAKE_VERSION} < 20160220
 .sinclude "${.OBJDIR}/${__depend_obj}"
 .else
@@ -280,7 +324,7 @@ ${__obj}: ${OBJS_DEPEND_GUESS.${__obj}}
 .endif	# !exists(${_depfile})
 .endfor
 
-.NOPATH: .depend ${DEPENDFILES_OBJS}
+.NOPATH: .depend ${DEPENDFILES}
 
 .depend: .PRECIOUS ${SRCS}
 
@@ -307,11 +351,11 @@ ${_ILINKS}:
 		path=${S}/${.TARGET}/include ;; \
 	esac ; \
 	${ECHO} ${.TARGET} "->" $$path ; \
-	ln -fhs $$path ${.TARGET}
+	ln -fns $$path ${.TARGET}
 
 # .depend needs include links so we remove them only together.
 kernel-cleandepend: .PHONY
-	rm -f ${DEPENDFILES} ${_ILINKS}
+	rm -f .depend .depend.* ${_ILINKS}
 
 kernel-tags:
 	@[ -f .depend ] || { echo "you must make depend first"; exit 1; }
@@ -365,11 +409,8 @@ config.o env.o hints.o vers.o vnode_if.o:
 	${NORMAL_C}
 	${NORMAL_CTFCONVERT}
 
-config.ln env.ln hints.ln vers.ln vnode_if.ln:
-	${NORMAL_LINT}
-
 .if ${MK_REPRODUCIBLE_BUILD} != "no"
-REPRO_FLAG="-r"
+REPRO_FLAG="-R"
 .endif
 vers.c: $S/conf/newvers.sh $S/sys/param.h ${SYSTEM_DEP}
 	MAKE="${MAKE}" sh $S/conf/newvers.sh ${REPRO_FLAG} ${KERN_IDENT}

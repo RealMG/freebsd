@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2006, 2011, 2016-2017 Robert N. M. Watson
  * All rights reserved.
  *
@@ -58,6 +60,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/fcntl.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
+#include <sys/filio.h>
 #include <sys/fnv_hash.h>
 #include <sys/kernel.h>
 #include <sys/uio.h>
@@ -111,7 +114,7 @@ static LIST_HEAD(, shm_mapping) *shm_dictionary;
 static struct sx shm_dict_lock;
 static struct mtx shm_timestamp_lock;
 static u_long shm_hash;
-static struct unrhdr *shm_ino_unr;
+static struct unrhdr64 shm_ino_unr;
 static dev_t shm_dev_ino;
 
 #define	SHM_HASH(fnv)	(&shm_dictionary[(fnv) & shm_hash])
@@ -124,6 +127,7 @@ static int	shm_remove(char *path, Fnv32_t fnv, struct ucred *ucred);
 static fo_rdwr_t	shm_read;
 static fo_rdwr_t	shm_write;
 static fo_truncate_t	shm_truncate;
+static fo_ioctl_t	shm_ioctl;
 static fo_stat_t	shm_stat;
 static fo_close_t	shm_close;
 static fo_chmod_t	shm_chmod;
@@ -137,7 +141,7 @@ struct fileops shm_ops = {
 	.fo_read = shm_read,
 	.fo_write = shm_write,
 	.fo_truncate = shm_truncate,
-	.fo_ioctl = invfo_ioctl,
+	.fo_ioctl = shm_ioctl,
 	.fo_poll = invfo_poll,
 	.fo_kqfilter = invfo_kqfilter,
 	.fo_stat = shm_stat,
@@ -209,12 +213,10 @@ uiomove_object_page(vm_object_t obj, size_t len, struct uio *uio)
 	}
 	vm_page_lock(m);
 	vm_page_hold(m);
-	if (m->queue == PQ_NONE) {
-		vm_page_deactivate(m);
-	} else {
-		/* Requeue to maintain LRU ordering. */
-		vm_page_requeue(m);
-	}
+	if (vm_page_active(m))
+		vm_page_reference(m);
+	else
+		vm_page_activate(m);
 	vm_page_unlock(m);
 	VM_OBJECT_WUNLOCK(obj);
 	error = uiomove_fromphys(&m, offset, tlen, uio);
@@ -363,6 +365,24 @@ shm_truncate(struct file *fp, off_t length, struct ucred *active_cred,
 	return (shm_dotruncate(shmfd, length));
 }
 
+int
+shm_ioctl(struct file *fp, u_long com, void *data, struct ucred *active_cred,
+    struct thread *td)
+{
+
+	switch (com) {
+	case FIONBIO:
+	case FIOASYNC:
+		/*
+		 * Allow fcntl(fd, F_SETFL, O_NONBLOCK) to work,
+		 * just like it would on an unlinked regular file
+		 */
+		return (0);
+	default:
+		return (ENOTTY);
+	}
+}
+
 static int
 shm_stat(struct file *fp, struct stat *sb, struct ucred *active_cred,
     struct thread *td)
@@ -456,13 +476,10 @@ retry:
 				if (vm_page_sleep_if_busy(m, "shmtrc"))
 					goto retry;
 			} else if (vm_pager_has_page(object, idx, NULL, NULL)) {
-				m = vm_page_alloc(object, idx, VM_ALLOC_NORMAL);
-				if (m == NULL) {
-					VM_OBJECT_WUNLOCK(object);
-					VM_WAIT;
-					VM_OBJECT_WLOCK(object);
+				m = vm_page_alloc(object, idx,
+				    VM_ALLOC_NORMAL | VM_ALLOC_WAITFAIL);
+				if (m == NULL)
 					goto retry;
-				}
 				rv = vm_pager_get_pages(object, &m, 1, NULL,
 				    NULL);
 				vm_page_lock(m);
@@ -534,7 +551,6 @@ struct shmfd *
 shm_alloc(struct ucred *ucred, mode_t mode)
 {
 	struct shmfd *shmfd;
-	int ino;
 
 	shmfd = malloc(sizeof(*shmfd), M_SHMFD, M_WAITOK | M_ZERO);
 	shmfd->shm_size = 0;
@@ -552,11 +568,7 @@ shm_alloc(struct ucred *ucred, mode_t mode)
 	vfs_timestamp(&shmfd->shm_birthtime);
 	shmfd->shm_atime = shmfd->shm_mtime = shmfd->shm_ctime =
 	    shmfd->shm_birthtime;
-	ino = alloc_unr(shm_ino_unr);
-	if (ino == -1)
-		shmfd->shm_ino = 0;
-	else
-		shmfd->shm_ino = ino;
+	shmfd->shm_ino = alloc_unr64(&shm_ino_unr);
 	refcount_init(&shmfd->shm_refs, 1);
 	mtx_init(&shmfd->shm_mtx, "shmrl", NULL, MTX_DEF);
 	rangelock_init(&shmfd->shm_rl);
@@ -587,8 +599,6 @@ shm_drop(struct shmfd *shmfd)
 		rangelock_destroy(&shmfd->shm_rl);
 		mtx_destroy(&shmfd->shm_mtx);
 		vm_object_deallocate(shmfd->shm_object);
-		if (shmfd->shm_ino != 0)
-			free_unr(shm_ino_unr, shmfd->shm_ino);
 		free(shmfd, M_SHMFD);
 	}
 }
@@ -627,8 +637,7 @@ shm_init(void *arg)
 	mtx_init(&shm_timestamp_lock, "shm timestamps", NULL, MTX_DEF);
 	sx_init(&shm_dict_lock, "shm dictionary");
 	shm_dictionary = hashinit(1024, M_SHMFD, &shm_hash);
-	shm_ino_unr = new_unrhdr(1, INT32_MAX, NULL);
-	KASSERT(shm_ino_unr != NULL, ("shm fake inodes not initialized"));
+	new_unrhdr64(&shm_ino_unr, 1);
 	shm_dev_ino = devfs_alloc_cdp_inode();
 	KASSERT(shm_dev_ino > 0, ("shm dev inode not initialized"));
 }
@@ -979,7 +988,7 @@ shm_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *active_cred,
                  gid = shmfd->shm_gid;
 	if (((uid != shmfd->shm_uid && uid != active_cred->cr_uid) ||
 	    (gid != shmfd->shm_gid && !groupmember(gid, active_cred))) &&
-	    (error = priv_check_cred(active_cred, PRIV_VFS_CHOWN, 0)))
+	    (error = priv_check_cred(active_cred, PRIV_VFS_CHOWN)))
 		goto out;
 	shmfd->shm_uid = uid;
 	shmfd->shm_gid = gid;

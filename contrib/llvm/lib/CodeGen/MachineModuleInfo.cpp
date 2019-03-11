@@ -194,7 +194,7 @@ void MMIAddrLabelMapCallbackPtr::allUsesReplacedWith(Value *V2) {
   Map->UpdateForRAUWBlock(cast<BasicBlock>(getValPtr()), cast<BasicBlock>(V2));
 }
 
-MachineModuleInfo::MachineModuleInfo(const TargetMachine *TM)
+MachineModuleInfo::MachineModuleInfo(const LLVMTargetMachine *TM)
   : ImmutablePass(ID), TM(*TM),
     Context(TM->getMCAsmInfo(), TM->getMCRegisterInfo(),
             TM->getObjFileLowering(), nullptr, false) {
@@ -206,10 +206,11 @@ MachineModuleInfo::~MachineModuleInfo() = default;
 bool MachineModuleInfo::doInitialization(Module &M) {
   ObjFileMMI = nullptr;
   CurCallSite = 0;
-  DbgInfoAvailable = UsesVAFloatArgument = UsesMorestackAddr = false;
+  UsesVAFloatArgument = UsesMorestackAddr = false;
+  HasSplitStack = HasNosplitStack = false;
   AddrLabelSymbols = nullptr;
   TheModule = &M;
-
+  DbgInfoAvailable = !empty(M.debug_compile_units());
   return false;
 }
 
@@ -276,7 +277,8 @@ MachineModuleInfo::getOrCreateMachineFunction(const Function &F) {
   MachineFunction *MF;
   if (I.second) {
     // No pre-existing machine function, create a new one.
-    MF = new MachineFunction(&F, TM, NextFnNum++, *this);
+    const TargetSubtargetInfo &STI = *TM.getSubtargetImpl(F);
+    MF = new MachineFunction(F, TM, STI, NextFnNum++, *this);
     // Update the set entry.
     I.first->second.reset(MF);
   } else {
@@ -313,10 +315,10 @@ public:
     MMI.deleteMachineFunctionFor(F);
     return true;
   }
-  
+
   StringRef getPassName() const override {
     return "Free MachineFunction";
-  } 
+  }
 };
 
 } // end anonymous namespace

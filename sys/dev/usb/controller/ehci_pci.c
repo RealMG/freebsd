@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-NetBSD
+ *
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
@@ -207,6 +209,9 @@ ehci_pci_match(device_t self)
 
 	case 0x15621131:
 		return "Philips ISP156x USB 2.0 controller";
+
+	case 0x70021039:
+		return "SiS 968 USB 2.0 controller";
 
 	case 0x31041106:
 		return ("VIA VT6202 USB 2.0 controller");

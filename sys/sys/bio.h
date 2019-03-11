@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1982, 1986, 1989, 1993
  *	The Regents of the University of California.  All rights reserved.
  * (c) UNIX System Laboratories, Inc.
@@ -64,6 +66,9 @@
 #define	BIO_UNMAPPED	0x10
 #define	BIO_TRANSIENT_MAPPING	0x20
 #define	BIO_VLIST	0x40
+
+#define	PRINT_BIO_FLAGS "\20\7vlist\6transient_mapping\5unmapped" \
+	"\4ordered\3onqueue\2done\1error"
 
 #ifdef _KERNEL
 struct disk;
@@ -136,6 +141,8 @@ struct bio_queue_head {
 	TAILQ_HEAD(bio_queue, bio) queue;
 	off_t last_offset;
 	struct	bio *insert_point;
+	int total;
+	int batched;
 };
 
 extern struct vm_map *bio_transient_map;

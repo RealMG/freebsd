@@ -11,13 +11,21 @@
 #define LLVM_DEBUGINFO_DWARF_DWARFSECTION_H
 
 #include "llvm/ADT/StringRef.h"
-#include "llvm/DebugInfo/DWARF/DWARFRelocMap.h"
 
 namespace llvm {
 
 struct DWARFSection {
   StringRef Data;
-  RelocAddrMap Relocs;
+};
+
+struct SectionName {
+  StringRef Name;
+  bool IsNameUnique;
+};
+
+struct SectionedAddress {
+  uint64_t Address;
+  uint64_t SectionIndex;
 };
 
 } // end namespace llvm

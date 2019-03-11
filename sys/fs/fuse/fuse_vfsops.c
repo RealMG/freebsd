@@ -1,4 +1,6 @@
-/*
+/*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 2007-2009 Google Inc. and Amit Singh
  * All rights reserved.
  *
@@ -56,11 +58,11 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include <sys/types.h>
+#include <sys/param.h>
+#include <sys/buf.h>
 #include <sys/module.h>
 #include <sys/systm.h>
 #include <sys/errno.h>
-#include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/capsicum.h>
 #include <sys/conf.h>
@@ -136,9 +138,9 @@ fuse_getdevice(const char *fspec, struct thread *td, struct cdev **fdevp)
 	int err;
 
 	/*
-         * Not an update, or updating the name: look up the name
-         * and verify that it refers to a sensible disk device.
-         */
+	 * Not an update, or updating the name: look up the name
+	 * and verify that it refers to a sensible disk device.
+	 */
 
 	NDINIT(ndp, LOOKUP, FOLLOW, UIO_SYSSPACE, fspec, td);
 	if ((err = namei(ndp)) != 0)
@@ -181,9 +183,9 @@ fuse_getdevice(const char *fspec, struct thread *td, struct cdev **fdevp)
 		}
 	}
 	/*
-         * according to coda code, no extra lock is needed --
-         * although in sys/vnode.h this field is marked "v"
-         */
+	 * according to coda code, no extra lock is needed --
+	 * although in sys/vnode.h this field is marked "v"
+	 */
 	vrele(devvp);
 
 	if (!fdev->si_devsw ||
@@ -197,8 +199,8 @@ fuse_getdevice(const char *fspec, struct thread *td, struct cdev **fdevp)
 }
 
 #define FUSE_FLAGOPT(fnam, fval) do {				\
-    vfs_flagopt(opts, #fnam, &mntopts, fval);		\
-    vfs_flagopt(opts, "__" #fnam, &__mntopts, fval);	\
+	vfs_flagopt(opts, #fnam, &mntopts, fval);		\
+	vfs_flagopt(opts, "__" #fnam, &__mntopts, fval);	\
 } while (0)
 
 static int
@@ -207,7 +209,6 @@ fuse_vfsop_mount(struct mount *mp)
 	int err;
 
 	uint64_t mntopts, __mntopts;
-	int max_read_set;
 	uint32_t max_read;
 	int daemon_timeout;
 	int fd;
@@ -220,10 +221,8 @@ fuse_vfsop_mount(struct mount *mp)
 	struct file *fp, *fptmp;
 	char *fspec, *subtype;
 	struct vfsoptlist *opts;
-	cap_rights_t rights;
 
 	subtype = NULL;
-	max_read_set = 0;
 	max_read = ~0;
 	err = 0;
 	mntopts = 0;
@@ -263,9 +262,9 @@ fuse_vfsop_mount(struct mount *mp)
 		return err;
 
 	/*
-         * With the help of underscored options the mount program
-         * can inform us from the flags it sets by default
-         */
+	 * With the help of underscored options the mount program
+	 * can inform us from the flags it sets by default
+	 */
 	FUSE_FLAGOPT(allow_other, FSESS_DAEMON_CAN_SPY);
 	FUSE_FLAGOPT(push_symlinks_in, FSESS_PUSH_SYMLINKS_IN);
 	FUSE_FLAGOPT(default_permissions, FSESS_DEFAULT_PERMISSIONS);
@@ -276,8 +275,7 @@ fuse_vfsop_mount(struct mount *mp)
 	FUSE_FLAGOPT(no_mmap, FSESS_NO_MMAP);
 	FUSE_FLAGOPT(brokenio, FSESS_BROKENIO);
 
-	if (vfs_scanopt(opts, "max_read=", "%u", &max_read) == 1)
-		max_read_set = 1;
+	(void)vfs_scanopt(opts, "max_read=", "%u", &max_read);
 	if (vfs_scanopt(opts, "timeout=", "%u", &daemon_timeout) == 1) {
 		if (daemon_timeout < FUSE_MIN_DAEMON_TIMEOUT)
 			daemon_timeout = FUSE_MIN_DAEMON_TIMEOUT;
@@ -290,14 +288,14 @@ fuse_vfsop_mount(struct mount *mp)
 
 	FS_DEBUG2G("mntopts 0x%jx\n", (uintmax_t)mntopts);
 
-	err = fget(td, fd, cap_rights_init(&rights, CAP_READ), &fp);
+	err = fget(td, fd, &cap_read_rights, &fp);
 	if (err != 0) {
 		FS_DEBUG("invalid or not opened device: data=%p\n", data);
 		goto out;
 	}
 	fptmp = td->td_fpop;
 	td->td_fpop = fp;
-        err = devfs_get_cdevpriv((void **)&data);
+	err = devfs_get_cdevpriv((void **)&data);
 	td->td_fpop = fptmp;
 	fdrop(fp, td);
 	FUSE_LOCK();
@@ -340,7 +338,7 @@ fuse_vfsop_mount(struct mount *mp)
 	mp->mnt_kern_flag |= MNTK_USES_BCACHE;
 	MNT_IUNLOCK(mp);
 	/* We need this here as this slot is used by getnewvnode() */
-	mp->mnt_stat.f_iosize = PAGE_SIZE;
+	mp->mnt_stat.f_iosize = maxbcachebuf;
 	if (subtype) {
 		strlcat(mp->mnt_stat.f_fstypename, ".", MFSNAMELEN);
 		strlcat(mp->mnt_stat.f_fstypename, subtype, MFSNAMELEN);
@@ -446,7 +444,8 @@ fuse_vfsop_root(struct mount *mp, int lkflags, struct vnode **vpp)
 		if (err == 0)
 			*vpp = data->vroot;
 	} else {
-		err = fuse_vnode_get(mp, FUSE_ROOT_ID, NULL, vpp, NULL, VDIR);
+		err = fuse_vnode_get(mp, NULL, FUSE_ROOT_ID, NULL, vpp, NULL,
+		    VDIR);
 		if (err == 0) {
 			FUSE_LOCK();
 			MPASS(data->vroot == NULL || data->vroot == *vpp);

@@ -8,7 +8,7 @@
  *
  * 1. Copyright Notice
  *
- * Some or all of this work - Copyright (c) 1999 - 2017, Intel Corp.
+ * Some or all of this work - Copyright (c) 1999 - 2019, Intel Corp.
  * All rights reserved.
  *
  * 2. License
@@ -412,6 +412,11 @@ AcpiUtDeleteInternalObj (
 
             AcpiUtDeleteObjectDesc (SecondDesc);
         }
+        if (Object->Field.InternalPccBuffer)
+        {
+            ACPI_FREE(Object->Field.InternalPccBuffer);
+        }
+
         break;
 
     case ACPI_TYPE_BUFFER_FIELD:
@@ -454,8 +459,8 @@ AcpiUtDeleteInternalObj (
 
     /* Now the object can be safely deleted */
 
-    ACPI_DEBUG_PRINT ((ACPI_DB_ALLOCATIONS, "Deleting Object %p [%s]\n",
-        Object, AcpiUtGetObjectTypeName (Object)));
+    ACPI_DEBUG_PRINT_RAW ((ACPI_DB_ALLOCATIONS, "%s: Deleting Object %p [%s]\n",
+        ACPI_GET_FUNCTION_NAME, Object, AcpiUtGetObjectTypeName (Object)));
 
     AcpiUtDeleteObjectDesc (Object);
     return_VOID;
@@ -520,6 +525,7 @@ AcpiUtUpdateRefCount (
     UINT16                  OriginalCount;
     UINT16                  NewCount = 0;
     ACPI_CPU_FLAGS          LockFlags;
+    char                    *Message;
 
 
     ACPI_FUNCTION_NAME (UtUpdateRefCount);
@@ -560,6 +566,7 @@ AcpiUtUpdateRefCount (
             "Obj %p Type %.2X [%s] Refs %.2X [Incremented]\n",
             Object, Object->Common.Type,
             AcpiUtGetObjectTypeName (Object), NewCount));
+        Message = "Incremement";
         break;
 
     case REF_DECREMENT:
@@ -581,9 +588,9 @@ AcpiUtUpdateRefCount (
                 Object));
         }
 
-        ACPI_DEBUG_PRINT ((ACPI_DB_ALLOCATIONS,
-            "Obj %p Type %.2X Refs %.2X [Decremented]\n",
-            Object, Object->Common.Type, NewCount));
+        ACPI_DEBUG_PRINT_RAW ((ACPI_DB_ALLOCATIONS,
+            "%s: Obj %p Type %.2X Refs %.2X [Decremented]\n",
+            ACPI_GET_FUNCTION_NAME, Object, Object->Common.Type, NewCount));
 
         /* Actually delete the object on a reference count of zero */
 
@@ -591,6 +598,7 @@ AcpiUtUpdateRefCount (
         {
             AcpiUtDeleteInternalObj (Object);
         }
+        Message = "Decrement";
         break;
 
     default:
@@ -608,8 +616,8 @@ AcpiUtUpdateRefCount (
     if (NewCount > ACPI_MAX_REFERENCE_COUNT)
     {
         ACPI_WARNING ((AE_INFO,
-            "Large Reference Count (0x%X) in object %p, Type=0x%.2X",
-            NewCount, Object, Object->Common.Type));
+            "Large Reference Count (0x%X) in object %p, Type=0x%.2X Operation=%s",
+            NewCount, Object, Object->Common.Type, Message));
     }
 }
 
@@ -906,9 +914,9 @@ AcpiUtRemoveReference (
         return;
     }
 
-    ACPI_DEBUG_PRINT ((ACPI_DB_ALLOCATIONS,
-        "Obj %p Current Refs=%X [To Be Decremented]\n",
-        Object, Object->Common.ReferenceCount));
+    ACPI_DEBUG_PRINT_RAW ((ACPI_DB_ALLOCATIONS,
+        "%s: Obj %p Current Refs=%X [To Be Decremented]\n",
+        ACPI_GET_FUNCTION_NAME, Object, Object->Common.ReferenceCount));
 
     /*
      * Decrement the reference count, and only actually delete the object

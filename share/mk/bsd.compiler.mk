@@ -19,7 +19,9 @@
 # COMPILER_FEATURES will contain one or more of the following, based on
 # compiler support for that feature:
 #
-# - c++11 : supports full (or nearly full) C++11 programming environment.
+# - c++11:     supports full (or nearly full) C++11 programming environment.
+# - retpoline: supports the retpoline speculative execution vulnerability
+#              mitigation.
 #
 # These variables with an X_ prefix will also be provided if XCC is set.
 #
@@ -31,13 +33,23 @@ __<bsd.compiler.mk>__:
 
 .include <bsd.opts.mk>
 
+.if defined(_NO_INCLUDE_COMPILERMK)
+# If _NO_INCLUDE_COMPILERMK is set we are doing a make obj/cleandir/cleanobj
+# and might not have a valid compiler in $PATH yet. In this case just set the
+# variables that are expected by the other .mk files and return
+COMPILER_TYPE=none
+X_COMPILER_TYPE=none
+COMPILER_VERSION=0
+X_COMPILER_VERSION=0
+COMPILER_FEATURES=none
+.else
 # command = /usr/local/bin/ccache cc ...
 # wrapper = /usr/local/libexec/ccache/cc ...
 CCACHE_BUILD_TYPE?=	command
 # Handle ccache after CC is determined, but not if CC/CXX are already
 # overridden with a manual setup.
 .if ${MK_CCACHE_BUILD:Uno} == "yes" && \
-    !make(showconfig) && \
+    !make(test-system-*) && !make(print-dir) && !make(showconfig) && \
     (${CC:M*ccache/world/*} == "" || ${CXX:M*ccache/world/*} == "")
 # CC is always prepended with the ccache wrapper rather than modifying
 # PATH since it is more clear that ccache is used and avoids wasting time
@@ -114,7 +126,16 @@ ccache-print-options: .PHONY
 .endif	# exists(${CCACHE_BIN})
 .endif	# ${MK_CCACHE_BUILD} == "yes"
 
-.for cc X_ in CC $${_empty_var_} XCC X_
+_cc_vars=CC $${_empty_var_}
+.if !empty(_WANT_TOOLCHAIN_CROSS_VARS)
+# Only the toplevel makefile needs to compute the X_COMPILER_* variables.
+# Skipping the computation of the unused X_COMPILER_* in the subdirectory
+# makefiles can save a noticeable amount of time when walking the whole source
+# tree (e.g. during make includes, etc.).
+_cc_vars+=XCC X_
+.endif
+
+.for cc X_ in ${_cc_vars}
 .if ${cc} == "CC" || !empty(XCC)
 # Try to import COMPILER_TYPE and COMPILER_VERSION from parent make.
 # The value is only used/exported for the same environment that impacts
@@ -146,7 +167,7 @@ ${X_}COMPILER_TYPE= none
 ${X_}COMPILER_VERSION= 0
 ${X_}COMPILER_FREEBSD_VERSION= 0
 .elif !defined(${X_}COMPILER_TYPE) || !defined(${X_}COMPILER_VERSION)
-_v!=	${${cc}} --version || echo 0.0.0
+_v!=	${${cc}:N${CCACHE_BIN}} --version || echo 0.0.0
 
 .if !defined(${X_}COMPILER_TYPE)
 . if ${${cc}:T:M*gcc*}
@@ -155,7 +176,7 @@ ${X_}COMPILER_TYPE:=	gcc
 ${X_}COMPILER_TYPE:=	clang
 . elif ${_v:Mgcc}
 ${X_}COMPILER_TYPE:=	gcc
-. elif ${_v:M\(GCC\)}
+. elif ${_v:M\(GCC\)} || ${_v:M*GNU}
 ${X_}COMPILER_TYPE:=	gcc
 . elif ${_v:Mclang} || ${_v:M(clang-*.*.*)}
 ${X_}COMPILER_TYPE:=	clang
@@ -169,7 +190,7 @@ ${X_}COMPILER_VERSION!=echo "${_v:M[1-9].[0-9]*}" | awk -F. '{print $$1 * 10000 
 .undef _v
 .endif
 .if !defined(${X_}COMPILER_FREEBSD_VERSION)
-${X_}COMPILER_FREEBSD_VERSION!=	{ echo "__FreeBSD_cc_version" | ${${cc}} -E - 2>/dev/null || echo __FreeBSD_cc_version; } | sed -n '$$p'
+${X_}COMPILER_FREEBSD_VERSION!=	{ echo "__FreeBSD_cc_version" | ${${cc}:N${CCACHE_BIN}} -E - 2>/dev/null || echo __FreeBSD_cc_version; } | sed -n '$$p'
 # If we get a literal "__FreeBSD_cc_version" back then the compiler
 # is a non-FreeBSD build that doesn't support it or some other error
 # occurred.
@@ -178,11 +199,13 @@ ${X_}COMPILER_FREEBSD_VERSION=	unknown
 .endif
 .endif
 
+${X_}COMPILER_FEATURES=
 .if ${${X_}COMPILER_TYPE} == "clang" || \
 	(${${X_}COMPILER_TYPE} == "gcc" && ${${X_}COMPILER_VERSION} >= 40800)
-${X_}COMPILER_FEATURES=	c++11
-.else
-${X_}COMPILER_FEATURES=
+${X_}COMPILER_FEATURES+=	c++11
+.endif
+.if ${${X_}COMPILER_TYPE} == "clang" && ${${X_}COMPILER_VERSION} >= 60000
+${X_}COMPILER_FEATURES+=	retpoline
 .endif
 
 .else
@@ -204,5 +227,8 @@ ${var}.${${X_}_cc_hash}:=	${${var}}
 .endif	# ${cc} == "CC" || !empty(XCC)
 .endfor	# .for cc in CC XCC
 
+.if !defined(_NO_INCLUDE_LINKERMK)
 .include <bsd.linker.mk>
+.endif
+.endif	# defined(_NO_INCLUDE_COMPILERMK)
 .endif	# !target(__<bsd.compiler.mk>__)

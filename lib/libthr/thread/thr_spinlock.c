@@ -1,4 +1,6 @@
-/*
+/*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1997 John Birrell <jb@cimlogic.com.au>.
  * All rights reserved.
  *
@@ -56,7 +58,7 @@ static int			initialized;
 static void	init_spinlock(spinlock_t *lck);
 
 /*
- * These are for compatability only.  Spinlocks of this type
+ * These are for compatibility only.  Spinlocks of this type
  * are deprecated.
  */
 
@@ -74,7 +76,7 @@ __thr_spinlock(spinlock_t *lck)
 {
 	struct spinlock_extra *_extra;
 
-	if (!__isthreaded)
+	if (!_thr_isthreaded())
 		PANIC("Spinlock called when not threaded.");
 	if (!initialized)
 		PANIC("Spinlocks not initialized.");

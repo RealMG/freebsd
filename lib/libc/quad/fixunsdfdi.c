@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1992, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -49,8 +51,7 @@ __FBSDID("$FreeBSD$");
  * of range becomes UQUAD_MAX.
  */
 u_quad_t
-__fixunsdfdi(x)
-	double x;
+__fixunsdfdi(double x)
 {
 	double toppart;
 	union uu t;

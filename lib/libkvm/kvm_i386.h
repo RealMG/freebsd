@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2015 John H. Baldwin <jhb@FreeBSD.org>
- * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,8 +52,11 @@ typedef	uint64_t	i386_pde_pae_t;
 #define	I386_NBPDR_PAE		(1 << I386_PDRSHIFT_PAE)
 #define	I386_PAGE_PS_MASK_PAE	(I386_NBPDR_PAE - 1)
 
+/* Source: i386/include/pmap.h */
 #define	I386_PG_V		0x001
+#define	I386_PG_RW		0x002
 #define	I386_PG_PS		0x080
+#define	I386_PG_NX		(1ULL << 63)
 #define	I386_PG_FRAME_PAE	(0x000ffffffffff000ull)
 #define	I386_PG_PS_FRAME_PAE	(0x000fffffffe00000ull)
 #define	I386_PG_FRAME		(0xfffff000)
@@ -64,14 +66,16 @@ typedef	uint64_t	i386_pde_pae_t;
 _Static_assert(PAGE_SHIFT == I386_PAGE_SHIFT, "PAGE_SHIFT mismatch");
 _Static_assert(PAGE_SIZE == I386_PAGE_SIZE, "PAGE_SIZE mismatch");
 _Static_assert(PAGE_MASK == I386_PAGE_MASK, "PAGE_MASK mismatch");
+#if 0
 _Static_assert(NPTEPG == I386_NPTEPG, "NPTEPG mismatch");
-_Static_assert(PDRSHIFT == I386_PDRSHIFT, "PDRSHIFT mismatch");
 _Static_assert(NBPDR == I386_NBPDR, "NBPDR mismatch");
+#endif
+_Static_assert(PDRSHIFT_NOPAE == I386_PDRSHIFT, "PDRSHIFT mismatch");
 
 _Static_assert(PG_V == I386_PG_V, "PG_V mismatch");
 _Static_assert(PG_PS == I386_PG_PS, "PG_PS mismatch");
-_Static_assert((u_int)PG_FRAME == I386_PG_FRAME, "PG_FRAME mismatch");
-_Static_assert(PG_PS_FRAME == I386_PG_PS_FRAME, "PG_PS_FRAME mismatch");
+_Static_assert((u_int)PG_FRAME_NOPAE == I386_PG_FRAME, "PG_FRAME mismatch");
+_Static_assert(PG_PS_FRAME_NOPAE == I386_PG_PS_FRAME, "PG_PS_FRAME mismatch");
 #endif
 
 int	_i386_native(kvm_t *);

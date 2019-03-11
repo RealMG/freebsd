@@ -86,7 +86,7 @@ cloudabi32_proc_setregs(struct thread *td, struct image_params *imgp,
 {
 
 	ia32_setregs(td, imgp, stack);
-	(void)cpu_set_user_tls(td, (void *)stack);
+	(void)cpu_set_user_tls(td, TO_PTR(stack));
 }
 
 static int
@@ -210,7 +210,6 @@ static struct sysentvec cloudabi32_elf_sysvec = {
 	.sv_fixup		= cloudabi32_fixup_tcb,
 	.sv_name		= "CloudABI ELF32",
 	.sv_coredump		= elf32_coredump,
-	.sv_pagesize		= IA32_PAGE_SIZE,
 	.sv_minuser		= FREEBSD32_MINUSER,
 	.sv_maxuser		= FREEBSD32_MAXUSER,
 	.sv_stackprot		= VM_PROT_READ | VM_PROT_WRITE,

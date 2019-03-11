@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 1998 - 2008 Søren Schmidt <sos@FreeBSD.org>
  * Copyright (c) 2009-2012 Alexander Motin <mav@FreeBSD.org>
  * All rights reserved.
@@ -459,6 +461,8 @@ struct ahci_channel {
 	struct mtx_padalign	mtx;		/* state lock */
 	STAILQ_HEAD(, ccb_hdr)	doneq;		/* queue of completed CCBs */
 	int			batch;		/* doneq is in use */
+
+	int			disablephy;	/* keep PHY disabled */
 };
 
 struct ahci_enclosure {
@@ -649,3 +653,6 @@ bus_dma_tag_t ahci_get_dma_tag(device_t dev, device_t child);
 int ahci_ctlr_reset(device_t dev);
 int ahci_ctlr_setup(device_t dev);
 void ahci_free_mem(device_t dev);
+
+extern devclass_t ahci_devclass;
+

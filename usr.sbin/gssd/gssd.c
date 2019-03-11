@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2008 Isilon Inc http://www.isilon.com/
  * Authors: Doug Rabson <dfr@rabson.org>
  * Developed with Red Inc: Alfred Perlstein <alfred@freebsd.org>
@@ -200,6 +202,7 @@ main(int argc, char **argv)
 		signal(SIGHUP, SIG_IGN);
 	}
 	signal(SIGTERM, gssd_terminate);
+	signal(SIGPIPE, gssd_terminate);
 
 	memset(&sun, 0, sizeof sun);
 	sun.sun_family = AF_LOCAL;

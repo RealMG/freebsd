@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 1993, David Greenman
  * All rights reserved.
  *
@@ -28,7 +30,6 @@
 __FBSDID("$FreeBSD$");
 
 #include "opt_capsicum.h"
-#include "opt_compat.h"
 #include "opt_hwpmc_hooks.h"
 #include "opt_ktrace.h"
 #include "opt_vm.h"
@@ -122,7 +123,7 @@ static int do_execve(struct thread *td, struct image_args *args,
 
 /* XXX This should be vm_size_t. */
 SYSCTL_PROC(_kern, KERN_PS_STRINGS, ps_strings, CTLTYPE_ULONG|CTLFLAG_RD|
-    CTLFLAG_MPSAFE, NULL, 0, sysctl_kern_ps_strings, "LU", "");
+    CTLFLAG_CAPRD|CTLFLAG_MPSAFE, NULL, 0, sysctl_kern_ps_strings, "LU", "");
 
 /* XXX This should be vm_size_t. */
 SYSCTL_PROC(_kern, KERN_USRSTACK, usrstack, CTLTYPE_ULONG|CTLFLAG_RD|
@@ -143,6 +144,8 @@ SYSCTL_INT(_kern, OID_AUTO, disallow_high_osrel, CTLFLAG_RW,
 static int map_at_zero = 0;
 SYSCTL_INT(_security_bsd, OID_AUTO, map_at_zero, CTLFLAG_RWTUN, &map_at_zero, 0,
     "Permit processes to map an object at virtual address 0.");
+
+EVENTHANDLER_LIST_DECLARE(process_exec);
 
 static int
 sysctl_kern_ps_strings(SYSCTL_HANDLER_ARGS)
@@ -316,7 +319,7 @@ post_execve(struct thread *td, int error, struct vmspace *oldvmspace)
 		 * If success, we upgrade to SINGLE_EXIT state to
 		 * force other threads to suicide.
 		 */
-		if (error == 0)
+		if (error == EJUSTRETURN)
 			thread_single(p, SINGLE_EXIT);
 		else
 			thread_single_end(p, SINGLE_BOUNDARY);
@@ -342,9 +345,9 @@ kern_execve(struct thread *td, struct image_args *args, struct mac *mac_p)
 {
 
 	AUDIT_ARG_ARGV(args->begin_argv, args->argc,
-	    args->begin_envv - args->begin_argv);
-	AUDIT_ARG_ENVV(args->begin_envv, args->envc,
-	    args->endp - args->begin_envv);
+	    exec_args_get_begin_envv(args) - args->begin_argv);
+	AUDIT_ARG_ENVV(exec_args_get_begin_envv(args), args->envc,
+	    args->endp - exec_args_get_begin_envv(args));
 	return (do_execve(td, args, mac_p));
 }
 
@@ -371,7 +374,6 @@ do_execve(struct thread *td, struct image_args *args, struct mac *mac_p)
 	struct ucred *tracecred = NULL;
 #endif
 	struct vnode *oldtextvp = NULL, *newtextvp;
-	cap_rights_t rights;
 	int credential_changing;
 	int textset;
 #ifdef MAC
@@ -452,8 +454,7 @@ interpret:
 		/*
 		 * Descriptors opened only with O_EXEC or O_RDONLY are allowed.
 		 */
-		error = fgetvp_exec(td, args->fd,
-		    cap_rights_init(&rights, CAP_FEXECVE), &newtextvp);
+		error = fgetvp_exec(td, args->fd, &cap_fexecve_rights, &newtextvp);
 		if (error)
 			goto exec_fail;
 		vn_lock(newtextvp, LK_EXCLUSIVE | LK_RETRY);
@@ -487,6 +488,7 @@ interpret:
 		goto exec_fail_dealloc;
 
 	imgp->proc->p_osrel = 0;
+	imgp->proc->p_fctl0 = 0;
 
 	/*
 	 * Implement image setuid/setgid.
@@ -518,6 +520,10 @@ interpret:
 	    interpvplabel, imgp);
 	credential_changing |= will_transition;
 #endif
+
+	/* Don't inherit PROC_PDEATHSIG_CTL value if setuid/setgid. */
+	if (credential_changing)
+		imgp->proc->p_pdeathsig = 0;
 
 	if (credential_changing &&
 #ifdef CAPABILITY_MODE
@@ -686,9 +692,14 @@ interpret:
 	 * Else stuff argument count as first item on stack
 	 */
 	if (p->p_sysent->sv_fixup != NULL)
-		(*p->p_sysent->sv_fixup)(&stack_base, imgp);
+		error = (*p->p_sysent->sv_fixup)(&stack_base, imgp);
 	else
-		suword(--stack_base, imgp->args->argc);
+		error = suword(--stack_base, imgp->args->argc) == 0 ?
+		    0 : EFAULT;
+	if (error != 0) {
+		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
+		goto exec_fail_dealloc;
+	}
 
 	if (args->fdp != NULL) {
 		/* Install a brand new file descriptor table. */
@@ -708,7 +719,7 @@ interpret:
 	/*
 	 * Malloc things before we need locks.
 	 */
-	i = imgp->args->begin_envv - imgp->args->begin_argv;
+	i = exec_args_get_begin_envv(imgp->args) - imgp->args->begin_argv;
 	/* Cache arguments if they fit inside our allowance */
 	if (ps_arg_cache_limit >= i + sizeof(struct pargs)) {
 		newargs = pargs_alloc(i);
@@ -777,7 +788,7 @@ interpret:
 
 #ifdef KTRACE
 		if (p->p_tracecred != NULL &&
-		    priv_check_cred(p->p_tracecred, PRIV_DEBUG_DIFFCRED, 0))
+		    priv_check_cred(p->p_tracecred, PRIV_DEBUG_DIFFCRED))
 			ktrprocexec(p, &tracecred, &tracevp);
 #endif
 		/*
@@ -849,28 +860,23 @@ interpret:
 	p->p_args = newargs;
 	newargs = NULL;
 
+	PROC_UNLOCK(p);
+
 #ifdef	HWPMC_HOOKS
 	/*
 	 * Check if system-wide sampling is in effect or if the
 	 * current process is using PMCs.  If so, do exec() time
 	 * processing.  This processing needs to happen AFTER the
 	 * P_INEXEC flag is cleared.
-	 *
-	 * The proc lock needs to be released before taking the PMC
-	 * SX.
 	 */
 	if (PMC_SYSTEM_SAMPLING_ACTIVE() || PMC_PROC_IS_USING_PMCS(p)) {
-		PROC_UNLOCK(p);
 		VOP_UNLOCK(imgp->vp, 0);
 		pe.pm_credentialschanged = credential_changing;
 		pe.pm_entryaddr = imgp->entry_addr;
 
 		PMC_CALL_HOOK_X(td, PMC_FN_PROCESS_EXEC, (void *) &pe);
 		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
-	} else
-		PROC_UNLOCK(p);
-#else  /* !HWPMC_HOOKS */
-	PROC_UNLOCK(p);
+	}
 #endif
 
 	/* Set values passed into the program in registers. */
@@ -905,10 +911,12 @@ exec_fail_dealloc:
 	free(imgp->freepath, M_TEMP);
 
 	if (error == 0) {
-		PROC_LOCK(p);
-		if (p->p_ptevents & PTRACE_EXEC)
-			td->td_dbgflags |= TDB_EXEC;
-		PROC_UNLOCK(p);
+		if (p->p_ptevents & PTRACE_EXEC) {
+			PROC_LOCK(p);
+			if (p->p_ptevents & PTRACE_EXEC)
+				td->td_dbgflags |= TDB_EXEC;
+			PROC_UNLOCK(p);
+		}
 
 		/*
 		 * Stop the process here if its stop event mask has
@@ -963,12 +971,17 @@ exec_fail:
 		ktrprocctor(p);
 #endif
 
-	return (error);
+	/*
+	 * We don't want cpu_set_syscall_retval() to overwrite any of
+	 * the register values put in place by exec_setregs().
+	 * Implementations of cpu_set_syscall_retval() will leave
+	 * registers unmodified when returning EJUSTRETURN.
+	 */
+	return (error == 0 ? EJUSTRETURN : error);
 }
 
 int
-exec_map_first_page(imgp)
-	struct image_params *imgp;
+exec_map_first_page(struct image_params *imgp)
 {
 	int rv, i, after, initial_pagein;
 	vm_page_t ma[VM_INITIAL_PAGEIN];
@@ -1002,7 +1015,7 @@ exec_map_first_page(imgp)
 			if ((ma[i] = vm_page_next(ma[i - 1])) != NULL) {
 				if (ma[i]->valid)
 					break;
-				if (vm_page_tryxbusy(ma[i]))
+				if (!vm_page_tryxbusy(ma[i]))
 					break;
 			} else {
 				ma[i] = vm_page_alloc(object, i,
@@ -1074,7 +1087,7 @@ exec_new_vmspace(struct image_params *imgp, struct sysentvec *sv)
 	imgp->sysent = sv;
 
 	/* May be called with Giant held */
-	EVENTHANDLER_INVOKE(process_exec, p, imgp);
+	EVENTHANDLER_DIRECT_INVOKE(process_exec, p, imgp);
 
 	/*
 	 * Blow away entire process VM, if address space not shared,
@@ -1091,9 +1104,13 @@ exec_new_vmspace(struct image_params *imgp, struct sysentvec *sv)
 		shmexit(vmspace);
 		pmap_remove_pages(vmspace_pmap(vmspace));
 		vm_map_remove(map, vm_map_min(map), vm_map_max(map));
-		/* An exec terminates mlockall(MCL_FUTURE). */
+		/*
+		 * An exec terminates mlockall(MCL_FUTURE), ASLR state
+		 * must be re-evaluated.
+		 */
 		vm_map_lock(map);
-		vm_map_modflags(map, 0, MAP_WIREFUTURE);
+		vm_map_modflags(map, 0, MAP_WIREFUTURE | MAP_ASLR |
+		    MAP_ASLR_IGNSTART);
 		vm_map_unlock(map);
 	} else {
 		error = vmspace_exec(p, sv_minuser, sv->sv_maxuser);
@@ -1102,6 +1119,7 @@ exec_new_vmspace(struct image_params *imgp, struct sysentvec *sv)
 		vmspace = p->p_vmspace;
 		map = &vmspace->vm_map;
 	}
+	map->flags |= imgp->map_flags;
 
 	/* Map a shared page */
 	obj = sv->sv_shared_page_obj;
@@ -1157,12 +1175,11 @@ exec_new_vmspace(struct image_params *imgp, struct sysentvec *sv)
  * space into the temporary string buffer.
  */
 int
-exec_copyin_args(struct image_args *args, char *fname,
+exec_copyin_args(struct image_args *args, const char *fname,
     enum uio_seg segflg, char **argv, char **envv)
 {
-	u_long argp, envp;
+	u_long arg, env;
 	int error;
-	size_t length;
 
 	bzero(args, sizeof(*args));
 	if (argv == NULL)
@@ -1179,67 +1196,43 @@ exec_copyin_args(struct image_args *args, char *fname,
 	/*
 	 * Copy the file name.
 	 */
-	if (fname != NULL) {
-		args->fname = args->buf;
-		error = (segflg == UIO_SYSSPACE) ?
-		    copystr(fname, args->fname, PATH_MAX, &length) :
-		    copyinstr(fname, args->fname, PATH_MAX, &length);
-		if (error != 0)
-			goto err_exit;
-	} else
-		length = 0;
-
-	args->begin_argv = args->buf + length;
-	args->endp = args->begin_argv;
-	args->stringspace = ARG_MAX;
+	error = exec_args_add_fname(args, fname, segflg);
+	if (error != 0)
+		goto err_exit;
 
 	/*
 	 * extract arguments first
 	 */
 	for (;;) {
-		error = fueword(argv++, &argp);
+		error = fueword(argv++, &arg);
 		if (error == -1) {
 			error = EFAULT;
 			goto err_exit;
 		}
-		if (argp == 0)
+		if (arg == 0)
 			break;
-		error = copyinstr((void *)(uintptr_t)argp, args->endp,
-		    args->stringspace, &length);
-		if (error != 0) {
-			if (error == ENAMETOOLONG) 
-				error = E2BIG;
+		error = exec_args_add_arg(args, (char *)(uintptr_t)arg,
+		    UIO_USERSPACE);
+		if (error != 0)
 			goto err_exit;
-		}
-		args->stringspace -= length;
-		args->endp += length;
-		args->argc++;
 	}
-
-	args->begin_envv = args->endp;
 
 	/*
 	 * extract environment strings
 	 */
 	if (envv) {
 		for (;;) {
-			error = fueword(envv++, &envp);
+			error = fueword(envv++, &env);
 			if (error == -1) {
 				error = EFAULT;
 				goto err_exit;
 			}
-			if (envp == 0)
+			if (env == 0)
 				break;
-			error = copyinstr((void *)(uintptr_t)envp,
-			    args->endp, args->stringspace, &length);
-			if (error != 0) {
-				if (error == ENAMETOOLONG)
-					error = E2BIG;
+			error = exec_args_add_env(args,
+			    (char *)(uintptr_t)env, UIO_USERSPACE);
+			if (error != 0)
 				goto err_exit;
-			}
-			args->stringspace -= length;
-			args->endp += length;
-			args->envc++;
 		}
 	}
 
@@ -1294,8 +1287,6 @@ exec_copyin_data_fds(struct thread *td, struct image_args *args,
 		/* No argument buffer provided. */
 		args->endp = args->begin_argv;
 	}
-	/* There are no environment variables. */
-	args->begin_envv = args->endp;
 
 	/* Create new file descriptor table. */
 	kfds = malloc(fdslen * sizeof(int), M_TEMP, M_WAITOK);
@@ -1321,7 +1312,7 @@ struct exec_args_kva {
 	SLIST_ENTRY(exec_args_kva) next;
 };
 
-static DPCPU_DEFINE(struct exec_args_kva *, exec_args_kva);
+DPCPU_DEFINE_STATIC(struct exec_args_kva *, exec_args_kva);
 
 static SLIST_HEAD(, exec_args_kva) exec_args_kva_freelist;
 static struct mtx exec_args_kva_mtx;
@@ -1370,7 +1361,7 @@ exec_release_args_kva(struct exec_args_kva *argkva, u_int gen)
 
 	base = argkva->addr;
 	if (argkva->gen != gen) {
-		vm_map_madvise(exec_map, base, base + exec_map_entry_size,
+		(void)vm_map_madvise(exec_map, base, base + exec_map_entry_size,
 		    MADV_FREE);
 		argkva->gen = gen;
 	}
@@ -1452,6 +1443,126 @@ exec_free_args(struct image_args *args)
 }
 
 /*
+ * A set to functions to fill struct image args.
+ *
+ * NOTE: exec_args_add_fname() must be called (possibly with a NULL
+ * fname) before the other functions.  All exec_args_add_arg() calls must
+ * be made before any exec_args_add_env() calls.  exec_args_adjust_args()
+ * may be called any time after exec_args_add_fname().
+ *
+ * exec_args_add_fname() - install path to be executed
+ * exec_args_add_arg() - append an argument string
+ * exec_args_add_env() - append an env string
+ * exec_args_adjust_args() - adjust location of the argument list to
+ *                           allow new arguments to be prepended
+ */
+int
+exec_args_add_fname(struct image_args *args, const char *fname,
+    enum uio_seg segflg)
+{
+	int error;
+	size_t length;
+
+	KASSERT(args->fname == NULL, ("fname already appended"));
+	KASSERT(args->endp == NULL, ("already appending to args"));
+
+	if (fname != NULL) {
+		args->fname = args->buf;
+		error = segflg == UIO_SYSSPACE ?
+		    copystr(fname, args->fname, PATH_MAX, &length) :
+		    copyinstr(fname, args->fname, PATH_MAX, &length);
+		if (error != 0)
+			return (error == ENAMETOOLONG ? E2BIG : error);
+	} else
+		length = 0;
+
+	/* Set up for _arg_*()/_env_*() */
+	args->endp = args->buf + length;
+	/* begin_argv must be set and kept updated */
+	args->begin_argv = args->endp;
+	KASSERT(exec_map_entry_size - length >= ARG_MAX,
+	    ("too little space remaining for arguments %zu < %zu",
+	    exec_map_entry_size - length, (size_t)ARG_MAX));
+	args->stringspace = ARG_MAX;
+
+	return (0);
+}
+
+static int
+exec_args_add_str(struct image_args *args, const char *str,
+    enum uio_seg segflg, int *countp)
+{
+	int error;
+	size_t length;
+
+	KASSERT(args->endp != NULL, ("endp not initialized"));
+	KASSERT(args->begin_argv != NULL, ("begin_argp not initialized"));
+
+	error = (segflg == UIO_SYSSPACE) ?
+	    copystr(str, args->endp, args->stringspace, &length) :
+	    copyinstr(str, args->endp, args->stringspace, &length);
+	if (error != 0)
+		return (error == ENAMETOOLONG ? E2BIG : error);
+	args->stringspace -= length;
+	args->endp += length;
+	(*countp)++;
+
+	return (0);
+}
+
+int
+exec_args_add_arg(struct image_args *args, const char *argp,
+    enum uio_seg segflg)
+{
+
+	KASSERT(args->envc == 0, ("appending args after env"));
+
+	return (exec_args_add_str(args, argp, segflg, &args->argc));
+}
+
+int
+exec_args_add_env(struct image_args *args, const char *envp,
+    enum uio_seg segflg)
+{
+
+	if (args->envc == 0)
+		args->begin_envv = args->endp;
+
+	return (exec_args_add_str(args, envp, segflg, &args->envc));
+}
+
+int
+exec_args_adjust_args(struct image_args *args, size_t consume, ssize_t extend)
+{
+	ssize_t offset;
+
+	KASSERT(args->endp != NULL, ("endp not initialized"));
+	KASSERT(args->begin_argv != NULL, ("begin_argp not initialized"));
+
+	offset = extend - consume;
+	if (args->stringspace < offset)
+		return (E2BIG);
+	memmove(args->begin_argv + extend, args->begin_argv + consume,
+	    args->endp - args->begin_argv + consume);
+	if (args->envc > 0)
+		args->begin_envv += offset;
+	args->endp += offset;
+	args->stringspace -= offset;
+	return (0);
+}
+
+char *
+exec_args_get_begin_envv(struct image_args *args)
+{
+
+	KASSERT(args->endp != NULL, ("endp not initialized"));
+
+	if (args->envc > 0)
+		return (args->begin_envv);
+	return (args->endp);
+}
+
+/*
  * Copy strings out to the new process address space, constructing new arg
  * and env vector tables. Return a pointer to the base so that it can be used
  * as the initial stack pointer.
@@ -1502,6 +1613,7 @@ exec_copyout_strings(struct image_params *imgp)
 	 */
 	if (execpath_len != 0) {
 		destp -= execpath_len;
+		destp = rounddown2(destp, sizeof(void *));
 		imgp->execpathp = destp;
 		copyout(imgp->execpath, (void *)destp, execpath_len);
 	}
@@ -1527,33 +1639,21 @@ exec_copyout_strings(struct image_params *imgp)
 	destp -= ARG_MAX - imgp->args->stringspace;
 	destp = rounddown2(destp, sizeof(void *));
 
-	/*
-	 * If we have a valid auxargs ptr, prepare some room
-	 * on the stack.
-	 */
+	vectp = (char **)destp;
 	if (imgp->auxargs) {
 		/*
-		 * 'AT_COUNT*2' is size for the ELF Auxargs data. This is for
-		 * lower compatibility.
+		 * Allocate room on the stack for the ELF auxargs
+		 * array.  It has up to AT_COUNT entries.
 		 */
-		imgp->auxarg_size = (imgp->auxarg_size) ? imgp->auxarg_size :
-		    (AT_COUNT * 2);
-		/*
-		 * The '+ 2' is for the null pointers at the end of each of
-		 * the arg and env vector sets,and imgp->auxarg_size is room
-		 * for argument of Runtime loader.
-		 */
-		vectp = (char **)(destp - (imgp->args->argc +
-		    imgp->args->envc + 2 + imgp->auxarg_size)
-		    * sizeof(char *));
-	} else {
-		/*
-		 * The '+ 2' is for the null pointers at the end of each of
-		 * the arg and env vector sets
-		 */
-		vectp = (char **)(destp - (imgp->args->argc + imgp->args->envc
-		    + 2) * sizeof(char *));
+		vectp -= howmany(AT_COUNT * sizeof(Elf_Auxinfo),
+		    sizeof(*vectp));
 	}
+
+	/*
+	 * Allocate room for the argv[] and env vectors including the
+	 * terminating NULL pointers.
+	 */
+	vectp -= imgp->args->argc + 1 + imgp->args->envc + 1;
 
 	/*
 	 * vectp also becomes our initial stack base
@@ -1686,7 +1786,7 @@ int
 exec_register(const struct execsw *execsw_arg)
 {
 	const struct execsw **es, **xs, **newexecsw;
-	int count = 2;	/* New slot and trailing NULL */
+	u_int count = 2;	/* New slot and trailing NULL */
 
 	if (execsw)
 		for (es = execsw; *es; es++)
